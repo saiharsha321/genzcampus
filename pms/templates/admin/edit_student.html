@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Edit Student - PMS{% endblock %}
+{% block title %}Edit Student - GenZCampus{% endblock %}
 {% block page_title %}Edit Student{% endblock %}
 
 {% block content %}
@@ -35,6 +35,36 @@
                         <input type="text" class="form-control" name="phone" value="{{ student.phone or '' }}">
                     </div>
 
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Year</label>
+                            <select class="form-select" name="year" required>
+                                <option value="1" {% if student.year==1 %}selected{% endif %}>1st Year</option>
+                                <option value="2" {% if student.year==2 %}selected{% endif %}>2nd Year</option>
+                                <option value="3" {% if student.year==3 %}selected{% endif %}>3rd Year</option>
+                                <option value="4" {% if student.year==4 %}selected{% endif %}>4th Year</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Department</label>
+                            <select class="form-select" name="department" required>
+                                {% for dept in departments %}
+                                <option value="{{ dept.name }}" {% if student.department==dept.name %}selected{% endif
+                                    %}>{{ dept.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Section</label>
+                            <select class="form-select" name="section" required>
+                                <option value="A" {% if student.section=='A' %}selected{% endif %}>A</option>
+                                <option value="B" {% if student.section=='B' %}selected{% endif %}>B</option>
+                                <option value="C" {% if student.section=='C' %}selected{% endif %}>C</option>
+                                <option value="D" {% if student.section=='D' %}selected{% endif %}>D</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <hr>
 
                     <div class="mb-3 form-check">
@@ -63,3 +93,5 @@
     </div>
 </div>
 {% endblock %}
+
+

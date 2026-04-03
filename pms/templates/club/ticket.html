@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Registration Ticket - {{ response.event.name }}{% endblock %}
+{% block page_title %}Event Ticket{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div id="printable-ticket" class="card border-0 shadow-lg overflow-hidden position-relative"
+                style="border-radius: 20px;">
+                <!-- Ticket Header -->
+                <div class="bg-primary p-4 text-white text-center">
+                    <h5 class="mb-0 text-uppercase fw-bold letter-spacing-1">Event Entry Ticket</h5>
+                </div>
+
+                <div class="card-body p-0">
+                    <div class="p-4 text-center border-bottom bg-light">
+                        <h3 class="fw-bold mb-1">{{ response.event.name }}</h3>
+                        <div class="text-primary fw-bold small text-uppercase">{{ response.event.club.name }}</div>
+                    </div>
+
+                    <div class="p-4">
+                        <div class="row align-items-center mb-4">
+                            <div class="col-7">
+                                <div class="mb-4">
+                                    <div class="text-muted small text-uppercase">Participant</div>
+                                    <div class="fw-bold h5 mb-0">{{ response.student.get_full_name() }}</div>
+                                    <div class="small text-muted">{{ response.student.roll_no }}</div>
+                                </div>
+                                <div class="mb-4">
+                                    <div class="text-muted small text-uppercase">Date & Time</div>
+                                    {% if response.event.start_date %}
+                                    <div class="fw-bold">{{ response.event.start_date.strftime('%d %b, %Y') }}</div>
+                                    <div class="small">{{ response.event.start_date.strftime('%I:%M %p') }}</div>
+                                    {% else %}
+                                    <div class="fw-bold">Date TBD</div>
+                                    {% endif %}
+                                </div>
+                                <div>
+                                    <div class="text-muted small text-uppercase">Venue</div>
+                                    <div class="fw-bold">{{ response.event.venue }}</div>
+                                </div>
+                            </div>
+                            <div class="col-5 text-center">
+                                <div class="bg-white p-2 rounded shadow-sm d-inline-block">
+                                    <img src="data:image/png;base64,{{ response.qr_code_data }}" class="img-fluid"
+                                        style="width: 150px; height: 150px;">
+                                </div>
+                                <div class="mt-2 fw-bold text-primary small">{{ response.ticket_id }}</div>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info py-2 px-3 small border-0 mb-0">
+                            <i class="fas fa-info-circle me-1"></i> Please show this QR code at the event entrance for
+                            attendance marking.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Ticket Footer Decor -->
+                <div class="bg-dark p-2 text-center text-white-50 small">
+                    <i class="fas fa-shield-halved me-1"></i> Verified by GenZCampus Command Center
+                </div>
+            </div>
+
+            <div class="mt-4 d-grid gap-2 d-md-flex justify-content-md-center">
+                <button onclick="window.print()" class="btn btn-outline-primary px-4">
+                    <i class="fas fa-print me-2"></i> Print Ticket
+                </button>
+                <a href="{{ url_for('student_dashboard') }}" class="btn btn-primary px-4">
+                    Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .letter-spacing-1 {
+        letter-spacing: 1px;
+    }
+
+    @media print {
+        body * {
+            visibility: hidden;
+        }
+
+        #printable-ticket,
+        #printable-ticket * {
+            visibility: visible;
+        }
+
+        #printable-ticket {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            box-shadow: none !important;
+        }
+
+        .btn,
+        .sidebar,
+        .mt-4 {
+            display: none !important;
+        }
+    }
+</style>
+{% endblock %}
+
+

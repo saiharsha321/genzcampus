@@ -6,3 +6,7 @@ pandas
 python-dotenv
 email-validator
 gunicorn
+openpyxl
+qrcode
+Pillow
+google-genai

@@ -16,7 +16,7 @@ def create_file(filepath, content):
         print(f"❌ Error creating {filepath}: {e}")
 
 def main():
-    print("🔧 Fixing PMS Project...")
+    print("🔧 Fixing GenZCampus Project...")
     
     # Fix utils.py with correct roll number validation
     utils_content = '''import os

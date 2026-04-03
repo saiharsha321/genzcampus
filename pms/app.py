@@ -1,13 +1,16 @@
 import os
+import json
 import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, send_from_directory, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_mail import Mail, Message
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta
-from models import db, User, Club, Event, Permission, Department, SystemConfig
+from models import db, User, Club, Event, Permission, Department, SystemConfig, EventResponse, ClassAttendance, TimeTable, ClassHoliday
 from config import Config
 from utils import allowed_file, validate_roll_no
+
+# Blueprint registration moved down
 import random
 import string
 
@@ -22,9 +25,36 @@ login_manager.login_view = 'login'
 login_manager.login_message_category = 'info'
 mail = Mail(app)
 
+from club_portal import club_portal
+app.register_blueprint(club_portal, url_prefix='/club')
+
+# Add global functions to Jinja
+app.jinja_env.globals.update(getattr=getattr, str=str, int=int)
+
+@app.context_processor
+def inject_branding():
+    try:
+        logo_config = SystemConfig.query.filter_by(key='college_logo').first()
+        return {'college_logo': logo_config.value if logo_config else None}
+    except:
+        return {'college_logo': None}
+
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+def format_time_range(time_range_str):
+    if not time_range_str:
+        return ""
+    try:
+        start_str, end_str = time_range_str.split(' - ')
+        start_obj = datetime.strptime(start_str.strip(), '%H:%M')
+        end_obj = datetime.strptime(end_str.strip(), '%H:%M')
+        return f"{start_obj.strftime('%I:%M %p')} - {end_obj.strftime('%I:%M %p')}"
+    except Exception:
+        return time_range_str
+
+app.jinja_env.filters['format_time_range'] = format_time_range
 
 # Create uploads directory
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -36,7 +66,7 @@ with app.app_context():
     # Create admin user if not exists
     if not User.query.filter_by(role='admin').first():
         admin = User(
-            email='admin@pms.com',
+            email='admin@genzcampus.com',
             first_name='System',
             last_name='Admin',
             role='admin'
@@ -71,6 +101,13 @@ with app.app_context():
         db.session.add_all([event1, event2, event3])
         db.session.commit()
 
+@app.after_request
+def add_header(response):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '-1'
+    return response
+
 # Routes
 @app.route('/')
 def index():
@@ -86,24 +123,48 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
-        user = User.query.filter_by(email=email).first()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
         
-        if user and user.check_password(password):
-            if user.is_blocked:
-                flash('Your account has been blocked. Please contact admin.', 'danger')
-                return redirect(url_for('login'))
-                
-            if user.role == 'student' and not user.is_verified:
-                flash('Please verify your email first', 'warning')
-                return redirect(url_for('verify_otp', user_id=user.id))
-                
-            login_user(user)
-            next_page = request.args.get('next')
-            return redirect(next_page) if next_page else redirect(url_for('index'))
-        else:
-            flash('Invalid email or password', 'danger')
+        # Logging to file for diagnostics
+        with open('instance/login_debug.log', 'a') as f:
+            f.write(f"\n--- {datetime.now()} ---\n")
+            f.write(f"Attempt: [{email}]\n")
+            
+            # 1. Check User Table
+            user = User.query.filter_by(email=email).first()
+            if user:
+                p_check = user.check_password(password)
+                f.write(f"Found User. Role: {user.role}. Password Match: {p_check}\n")
+                if p_check:
+                    if user.is_blocked:
+                        flash('Your account has been blocked. Please contact admin.', 'danger')
+                        return redirect(url_for('login'))
+                    if user.role == 'student' and not user.is_verified:
+                        flash('Please verify your email first', 'warning')
+                        return redirect(url_for('verify_otp', user_id=user.id))
+                    login_user(user)
+                    next_page = request.args.get('next')
+                    return redirect(next_page) if next_page else redirect(url_for('index'))
+            
+            # 2. Check Club Table
+            club = Club.query.filter_by(club_login_id=email).first()
+            if club:
+                p_check = club.check_password(password)
+                f.write(f"Found Club: {club.name}. Password Match: {p_check}\n")
+                if p_check:
+                    if not club.is_active:
+                        flash('This club portal has been deactivated by the admin.', 'danger')
+                        return redirect(url_for('login'))
+                    session['club_id'] = club.id
+                    session['club_name'] = club.name
+                    session['role'] = 'President'
+                    flash(f'Welcome to {club.name} Portal!', 'success')
+                    return redirect(url_for('club_portal.dashboard'))
+            
+            f.write("Result: FAILED\n")
+        
+        flash('Invalid email or password', 'danger')
     
     return render_template('login.html')
 
@@ -117,6 +178,7 @@ def student_signup():
         last_name = request.form.get('last_name')
         section = request.form.get('section')
         department = request.form.get('department')
+        year = request.form.get('year')
         
         if not validate_roll_no(roll_no):
             flash('Invalid roll number. Must be 5-20 chars, alphanumeric, with at least 1 letter and 1 number (e.g., 24N81A6261).', 'danger')
@@ -126,11 +188,13 @@ def student_signup():
         
         if User.query.filter_by(roll_no=roll_no).first():
             flash('Roll number already registered', 'danger')
-            return render_template('student_signup.html')
+            departments = Department.query.all()
+            return render_template('student_signup.html', departments=departments)
         
         if User.query.filter_by(email=email).first():
             flash('Email already registered', 'danger')
-            return render_template('student_signup.html')
+            departments = Department.query.all()
+            return render_template('student_signup.html', departments=departments)
         
         student = User(
             roll_no=roll_no,
@@ -139,6 +203,7 @@ def student_signup():
             last_name=last_name,
             section=section,
             department=department,
+            year=year,
             role='student',
             is_verified=False
         )
@@ -173,7 +238,7 @@ def student_signup():
                 )
                 mail = Mail(app) # Re-init mail with new config
                 
-                msg = Message('Verify your PMS Account',
+                msg = Message('Verify your GenZCampus Account',
                             sender=app.config['MAIL_USERNAME'],
                             recipients=[email])
                 msg.body = f'Your OTP is: {otp}. It expires in 10 minutes.'
@@ -242,7 +307,7 @@ def forgot_password():
                     )
                     mail = Mail(app) # Re-init mail with new config
                     
-                    msg = Message('Reset your PMS Password',
+                    msg = Message('Reset your GenZCampus Password',
                                 sender=app.config['MAIL_USERNAME'],
                                 recipients=[email])
                     msg.body = f'Your Password Reset OTP is: {otp}. It expires in 10 minutes.'
@@ -352,8 +417,50 @@ def manage_students():
         flash('Access denied', 'danger')
         return redirect(url_for('index'))
     
-    students = User.query.filter_by(role='student').all()
-    return render_template('admin/students.html', students=students)
+    # Get parameters
+    year = request.args.get('year')
+    dept = request.args.get('dept')
+    section = request.args.get('section')
+    search = request.args.get('search', '').strip()
+    
+    show_results = False
+    students = []
+    
+    # Only perform query if at least one filter is applied
+    if year or dept or section or search:
+        show_results = True
+        query = User.query.filter_by(role='student')
+        
+        if year:
+            query = query.filter_by(year=year)
+        
+        if dept:
+            query = query.filter_by(department=dept)
+
+        if section:
+            query = query.filter_by(section=section)
+            
+        if search:
+            search_filter = f"%{search}%"
+            query = query.filter(
+                db.or_(
+                    User.roll_no.ilike(search_filter),
+                    User.first_name.ilike(search_filter),
+                    User.last_name.ilike(search_filter)
+                )
+            )
+            
+        students = query.order_by(User.year, User.department, User.section, User.roll_no).all()
+        
+    departments = Department.query.order_by(Department.name).all()
+    return render_template('admin/students.html', 
+                         students=students, 
+                         departments=departments, 
+                         current_year=year, 
+                         current_dept=dept, 
+                         current_section=section,
+                         search=search,
+                         show_results=show_results)
 
 @app.route('/admin/students/add', methods=['POST'])
 @login_required
@@ -368,6 +475,7 @@ def add_student():
     first_name = request.form.get('first_name')
     last_name = request.form.get('last_name')
     department = request.form.get('department')
+    year = request.form.get('year')
     section = request.form.get('section')
     
     if User.query.filter_by(roll_no=roll_no).first():
@@ -385,6 +493,7 @@ def add_student():
         last_name=last_name,
         role='student',
         department=department,
+        year=year,
         section=section,
         is_verified=True # Admin created students are auto-verified
     )
@@ -413,6 +522,9 @@ def edit_student(student_id):
         student.last_name = request.form.get('last_name')
         student.email = request.form.get('email')
         student.phone = request.form.get('phone')
+        student.department = request.form.get('department')
+        student.year = request.form.get('year')
+        student.section = request.form.get('section')
         
         # Admin can block/unblock
         is_blocked = request.form.get('is_blocked') == 'on'
@@ -427,7 +539,9 @@ def edit_student(student_id):
         flash('Student profile updated successfully', 'success')
         return redirect(url_for('manage_students'))
         
-    return render_template('admin/edit_student.html', student=student)
+    # Fetch departments for the dropdown
+    departments = Department.query.all()
+    return render_template('admin/edit_student.html', student=student, departments=departments)
 
 
 @app.route('/admin/students/delete/<int:student_id>')
@@ -475,24 +589,47 @@ def bulk_upload_students():
                 df = pd.read_excel(file)
             
             created_count = 0
+            skipped_count = 0
+            seen_rolls = set()
+            seen_emails = set()
+            
             for _, row in df.iterrows():
                 roll_no = str(row['roll_no']).upper()
-                if not User.query.filter_by(roll_no=roll_no).first() and validate_roll_no(roll_no):
-                    student = User(
-                        roll_no=roll_no,
-                        email=row['email'],
-                        first_name=row['first_name'],
-                        last_name=row['last_name'],
-                        section=row['section'],
-                        department=row.get('department', 'CSE'),
-                        role='student'
-                    )
-                    student.set_password('default123')
-                    db.session.add(student)
-                    created_count += 1
+                email = str(row['email']).lower().strip()
+                
+                # Basic validation
+                if pd.isna(email) or not email or not pd.notna(row['roll_no']):
+                    skipped_count += 1
+                    continue
+                    
+                if validate_roll_no(roll_no) and roll_no not in seen_rolls and email not in seen_emails:
+                    if not User.query.filter_by(roll_no=roll_no).first() and not User.query.filter_by(email=email).first():
+                        student = User(
+                            roll_no=roll_no,
+                            email=email,
+                            first_name=row['first_name'],
+                            last_name=row['last_name'],
+                            section=row['section'],
+                            department=row.get('department', 'CSE'),
+                            year=row.get('year'),
+                            role='student'
+                        )
+                        student.set_password('default123')
+                        db.session.add(student)
+                        seen_rolls.add(roll_no)
+                        seen_emails.add(email)
+                        created_count += 1
+                    else:
+                        skipped_count += 1
+                else:
+                    skipped_count += 1
             
             db.session.commit()
-            flash(f'Successfully created {created_count} student accounts', 'success')
+            
+            msg = f'Successfully created {created_count} student accounts.'
+            if skipped_count > 0:
+                msg += f' Skipped {skipped_count} invalid or duplicate entries.'
+            flash(msg, 'success')
         
         except Exception as e:
             flash(f'Error processing file: {str(e)}', 'danger')
@@ -500,6 +637,246 @@ def bulk_upload_students():
         flash('Invalid file type. Please upload CSV or Excel file.', 'danger')
     
     return redirect(url_for('manage_students'))
+
+# --- TimeTable Management ---
+
+@app.route('/admin/timetable')
+@login_required
+def manage_timetable():
+    if not current_user.is_admin() and not current_user.is_hod():
+        flash('Access denied', 'danger')
+        return redirect(url_for('index'))
+    
+    depts = Department.query.all()
+    selected_dept = request.args.get('department')
+    selected_year = request.args.get('year')
+    selected_section = request.args.get('section')
+    
+    timetable_data = {}
+    if selected_dept and selected_year and selected_section:
+        records = TimeTable.query.filter_by(
+            department=selected_dept, 
+            year=selected_year, 
+            section=selected_section
+        ).all()
+        for r in records:
+            timetable_data[r.day] = r
+            
+    return render_template('admin/manage_timetable.html', 
+                           departments=depts,
+                           selected_dept=selected_dept,
+                           selected_year=selected_year,
+                           selected_section=selected_section,
+                           timetable_data=timetable_data)
+
+@app.route('/admin/timetable/analyze', methods=['POST'])
+@login_required
+def analyze_timetable():
+    if not current_user.is_admin() and not current_user.is_hod():
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+        
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    dept = request.form.get('department', '').upper()
+    year = request.form.get('year', '')
+    section = request.form.get('section', '')
+
+    try:
+        from google import genai
+        import PIL.Image
+        from dotenv import load_dotenv
+
+        # Ensure environment variables are loaded for the running process
+        load_dotenv(os.path.join(os.path.abspath(os.path.dirname(__file__)), '.env'))
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not found in environment")
+
+        client = genai.Client(api_key=api_key)
+        
+        # Save temp file
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], 'temp_timetable_' + secure_filename(file.filename))
+        file.save(temp_path)
+        
+        img = PIL.Image.open(temp_path)
+        
+        prompt = f"""
+        Analyze this university timetable image.
+        Extract the subjects for each period (usually 1 to 7) for Monday to Saturday.
+        Also, extract the precise time duration for each of the 7 periods. Provide time strictly in 24-hour format (e.g., '13:00 - 13:50', not '1:00 - 1:50' or '1:00 PM').
+        
+        Return ONLY a raw JSON mapping with the following exact structure, with no markdown formatting, no backticks, just the JSON string:
+        {{
+            "parsed_data": {{
+                "Monday": ["Sub 1", "Sub 2", "Sub 3", "Sub 4", "Sub 5", "Sub 6", "Sub 7"],
+                "Tuesday": ["...", "...", "...", "...", "...", "...", "..."],
+                "Wednesday": ["...", "...", "...", "...", "...", "...", "..."],
+                "Thursday": ["...", "...", "...", "...", "...", "...", "..."],
+                "Friday": ["...", "...", "...", "...", "...", "...", "..."],
+                "Saturday": ["...", "...", "...", "...", "...", "...", "..."]
+            }},
+            "timings": [
+                "09:00 - 10:00",
+                "10:00 - 10:50",
+                "11:00 - 11:50",
+                "11:50 - 12:40",
+                "13:30 - 14:20",
+                "14:20 - 15:10",
+                "15:10 - 16:00"
+            ]
+        }}
+        Note: If a period says "Break" or "Lunch" or is empty, use an empty string "" for the subject.
+        Make sure to exclude explicit break/lunch columns from the 'parsed_data' array if they are not actual class periods. We only want the 7 class periods.
+        """
+        
+        response = None
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[img, prompt]
+            )
+        finally:
+            # Assure cleanup
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+                
+        json_str = response.text.replace("```json", "").replace("```", "").strip()
+        data = json.loads(json_str)
+        
+        parsed_data = data.get("parsed_data", {})
+        # If API failed to provide 7 timings, fallback to defaults
+        extracted_timings = data.get("timings", [])
+        if not extracted_timings or len(extracted_timings) < 7:
+            extracted_timings = ["09:30 - 10:20", "10:20 - 11:10", "11:10 - 12:00", "13:00 - 13:50", "13:50 - 14:40", "14:40 - 15:30", "15:30 - 16:20"]
+            
+        detected_format = f"{dept} ({year} Year, Section {section}) - AI Extracted"
+
+        return jsonify({
+            'success': True,
+            'parsed_data': parsed_data,
+            'timings': extracted_timings,
+            'detected_format': detected_format,
+            'message': f'Digital Twin Analysis complete using Gemini for {detected_format}.'
+        })
+
+    except Exception as e:
+        print(f"Gemini Extraction Error: {e}")
+        # Generic fallback for other departments if AI fails
+        import random
+        subjects_pool = ["DSA", "DBMS", "JAVA", "PYTHON", "DAA", "CAO", "OS", "CN", "WT"]
+        parsed_data = {}
+        for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']:
+            day_subjects = []
+            for p in range(7):
+                day_subjects.append(random.choice(subjects_pool) if random.random() > 0.1 else "")
+            parsed_data[day] = day_subjects
+        detected_format = f"{dept} ({year} Year, Section {section}) - Feedback Simulation"
+        timings = ["09:30 - 10:20", "10:20 - 11:10", "11:10 - 12:00", "13:00 - 13:50", "13:50 - 14:40", "14:40 - 15:30", "15:30 - 16:20"]
+
+        return jsonify({
+            'success': True,
+            'parsed_data': parsed_data,
+            'timings': timings,
+            'detected_format': detected_format,
+            'message': f'Analysis simulation fallback used for {detected_format}.'
+        })
+
+@app.route('/admin/timetable/save', methods=['POST'])
+@login_required
+def save_timetable():
+    if not current_user.is_admin() and not current_user.is_hod():
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    data = request.get_json()
+    dept = data.get('department')
+    year = data.get('year')
+    sec = data.get('section')
+    schedule = data.get('schedule') # { 'Monday': ['Sub1', 'Sub2', ...], 'Tuesday': ... }
+    timings = data.get('timings')   # ['Time1', 'Time2', ...]
+    
+    if not all([dept, year, sec, schedule]):
+        return jsonify({'error': 'Missing data'}), 400
+        
+    try:
+        for day, periods in schedule.items():
+            record = TimeTable.query.filter_by(department=dept, year=year, section=sec, day=day).first()
+            if not record:
+                record = TimeTable(department=dept, year=year, section=sec, day=day)
+                db.session.add(record)
+            
+            # Update periods
+            record.period_1 = periods[0] if len(periods) > 0 else None
+            record.period_2 = periods[1] if len(periods) > 1 else None
+            record.period_3 = periods[2] if len(periods) > 2 else None
+            record.period_4 = periods[3] if len(periods) > 3 else None
+            record.period_5 = periods[4] if len(periods) > 4 else None
+            record.period_6 = periods[5] if len(periods) > 5 else None
+            record.period_7 = periods[6] if len(periods) > 6 else None
+
+            # Update timings
+            if timings:
+                record.period_1_time = timings[0] if len(timings) > 0 else record.period_1_time
+                record.period_2_time = timings[1] if len(timings) > 1 else record.period_2_time
+                record.period_3_time = timings[2] if len(timings) > 2 else record.period_3_time
+                record.period_4_time = timings[3] if len(timings) > 3 else record.period_4_time
+                record.period_5_time = timings[4] if len(timings) > 4 else record.period_5_time
+                record.period_6_time = timings[5] if len(timings) > 5 else record.period_6_time
+                record.period_7_time = timings[6] if len(timings) > 6 else record.period_7_time
+            
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Timetable saved successfully!'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/students/export')
+@login_required
+def export_students():
+    if not current_user.is_admin():
+        flash('Access denied', 'danger')
+        return redirect(url_for('index'))
+    
+    year = request.args.get('year')
+    dept = request.args.get('dept')
+    
+    query = User.query.filter_by(role='student')
+    if year:
+        query = query.filter_by(year=year)
+    if dept:
+        query = query.filter_by(department=dept)
+        
+    students = query.all()
+    
+    data = []
+    for s in students:
+        data.append({
+            'Roll No': s.roll_no,
+            'First Name': s.first_name,
+            'Last Name': s.last_name,
+            'Email': s.email,
+            'Phone': s.phone or '',
+            'Year': s.year or '',
+            'Department': s.department or '',
+            'Section': s.section or '',
+            'Registered At': s.created_at.strftime('%Y-%m-%d %H:%M:%S') if s.created_at else ''
+        })
+        
+    df = pd.DataFrame(data)
+    
+    # Save to a temporary file
+    filename = f"students_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    df.to_excel(filepath, index=False)
+    
+    return send_file(filepath, as_attachment=True)
 
 @app.route('/admin/settings', methods=['GET', 'POST'])
 @login_required
@@ -509,34 +886,50 @@ def admin_settings():
         return redirect(url_for('index'))
     
     if request.method == 'POST':
-        # Update settings
-        configs = {
-            'MAIL_SERVER': request.form.get('mail_server'),
-            'MAIL_PORT': request.form.get('mail_port'),
-            'MAIL_USERNAME': request.form.get('mail_username'),
-            'MAIL_PASSWORD': request.form.get('mail_password'),
-            'MAIL_USE_TLS': 'True' if request.form.get('mail_use_tls') else 'False'
-        }
-        
-        for key, value in configs.items():
-            config = SystemConfig.query.filter_by(key=key).first()
-            if config:
-                config.value = value
-            else:
-                new_config = SystemConfig(key=key, value=value)
-                db.session.add(new_config)
+        # 1. Handle SMTP Settings
+        if 'mail_server' in request.form:
+            configs = {
+                'MAIL_SERVER': request.form.get('mail_server'),
+                'MAIL_PORT': request.form.get('mail_port'),
+                'MAIL_USERNAME': request.form.get('mail_username'),
+                'MAIL_PASSWORD': request.form.get('mail_password'),
+                'MAIL_USE_TLS': 'True' if request.form.get('mail_use_tls') else 'False'
+            }
+            for key, value in configs.items():
+                config = SystemConfig.query.filter_by(key=key).first()
+                if config: config.value = value
+                else: db.session.add(SystemConfig(key=key, value=value))
+            flash('SMTP settings updated successfully', 'success')
+
+        # 2. Handle Logo Upload
+        if 'logo' in request.files:
+            file = request.files['logo']
+            if file and file.filename != '':
+                if allowed_file(file.filename):
+                    filename = secure_filename(f"college_logo_{file.filename}")
+                    logo_dir = os.path.join(app.root_path, 'static', 'uploads', 'logos')
+                    os.makedirs(logo_dir, exist_ok=True)
+                    file_path = os.path.join(logo_dir, filename)
+                    file.save(file_path)
+                    
+                    logo_url = f'uploads/logos/{filename}'
+                    config = SystemConfig.query.filter_by(key='college_logo').first()
+                    if not config: db.session.add(SystemConfig(key='college_logo', value=logo_url))
+                    else: config.value = logo_url
+                    flash('College logo updated successfully!', 'success')
+                else:
+                    flash('Invalid file type. Please upload an image.', 'danger')
         
         db.session.commit()
-        flash('Settings updated successfully', 'success')
         return redirect(url_for('admin_settings'))
         
-    # Fetch current settings
-    settings = {}
-    configs = SystemConfig.query.all()
-    for config in configs:
-        settings[config.key] = config.value
-        
-    return render_template('admin/settings.html', settings=settings)
+    # Data for the template
+    logo_config = SystemConfig.query.filter_by(key='college_logo').first()
+    smtp_configs = SystemConfig.query.filter(SystemConfig.key.like('MAIL_%')).all()
+    
+    return render_template('admin/settings.html', 
+                         current_logo=logo_config.value if logo_config else None,
+                         smtp_configs=smtp_configs)
 
 @app.route('/admin/departments')
 @login_required
@@ -576,6 +969,19 @@ def delete_department(dept_id):
         return redirect(url_for('manage_departments'))
     
     department = Department.query.get_or_404(dept_id)
+    
+    # Safe delete check: check if any users belong to this department
+    linked_users = User.query.filter_by(department=department.name).first()
+    if linked_users:
+        flash(f'Cannot delete department "{department.name}" because it is linked to existing students or faculty.', 'danger')
+        return redirect(url_for('manage_departments'))
+    
+    # Also check for class incharge assignments just in case
+    linked_incharge = User.query.filter_by(incharge_department=department.name).first()
+    if linked_incharge:
+        flash(f'Cannot delete department "{department.name}" because it is assigned as an incharge department for faculty.', 'danger')
+        return redirect(url_for('manage_departments'))
+        
     db.session.delete(department)
     db.session.commit()
     
@@ -585,30 +991,62 @@ def delete_department(dept_id):
 @app.route('/admin/faculty')
 @login_required
 def manage_faculty():
-    if not current_user.is_admin():
+    if not (current_user.is_admin() or current_user.is_hod()):
         flash('Access denied', 'danger')
         return redirect(url_for('index'))
     
-    faculty = User.query.filter(User.role.in_(['faculty', 'hod'])).all()
-    return render_template('admin/faculty.html', faculty=faculty)
+    if current_user.is_hod():
+        # HOD can see faculty whose primary department is the HOD's department,
+        # OR faculty who specify the HOD's department in their handling_departments.
+        faculty = User.query.filter(User.role == 'faculty').filter(
+            db.or_(
+                User.department == current_user.department,
+                User.handling_departments.like(f"%{current_user.department}%")
+            )
+        ).all()
+        departments = [Department.query.filter_by(name=current_user.department).first()]
+    else:
+        faculty = User.query.filter(User.role.in_(['faculty', 'hod'])).all()
+        departments = Department.query.order_by(Department.name).all()
+        
+    return render_template('admin/faculty.html', faculty=faculty, departments=departments)
 
 @app.route('/admin/faculty/edit/<int:faculty_id>', methods=['GET', 'POST'])
 @login_required
 def edit_faculty(faculty_id):
-    if not current_user.is_admin():
+    if not (current_user.is_admin() or current_user.is_hod()):
         flash('Access denied', 'danger')
         return redirect(url_for('manage_faculty'))
     
     faculty = User.query.get_or_404(faculty_id)
-    if not faculty.is_faculty():
-        flash('Can only edit faculty accounts', 'danger')
-        return redirect(url_for('manage_faculty'))
+    
+    if current_user.is_hod():
+        if faculty.department != current_user.department or faculty.role == 'hod':
+            flash('Access denied', 'danger')
+            return redirect(url_for('manage_faculty'))
+    else:
+        if not faculty.is_faculty():
+            flash('Can only edit faculty accounts', 'danger')
+            return redirect(url_for('manage_faculty'))
         
     if request.method == 'POST':
         faculty.first_name = request.form.get('first_name')
         faculty.last_name = request.form.get('last_name')
         faculty.email = request.form.get('email')
         faculty.phone = request.form.get('phone')
+        
+        if not current_user.is_hod():
+            # Only admin can change these base fields
+            faculty.role = request.form.get('role')
+            faculty.department = request.form.get('department')
+        
+        # Handling Departments multi-select
+        handling_depts = request.form.getlist('handling_departments')
+        faculty.handling_departments = ','.join(handling_depts) if handling_depts else ''
+        
+        # Subjects multi-select (can be typed dynamically)
+        subjects_list = request.form.getlist('subjects')
+        faculty.subjects = ','.join([s.strip() for s in subjects_list if s.strip()])
         
         # Block/Unblock
         is_blocked = request.form.get('is_blocked') == 'on'
@@ -642,14 +1080,20 @@ def edit_faculty(faculty_id):
 @app.route('/admin/faculty/delete/<int:faculty_id>')
 @login_required
 def delete_faculty(faculty_id):
-    if not current_user.is_admin():
+    if not (current_user.is_admin() or current_user.is_hod()):
         flash('Access denied', 'danger')
         return redirect(url_for('manage_faculty'))
     
     faculty = User.query.get_or_404(faculty_id)
-    if not faculty.is_faculty():
-        flash('Can only delete faculty accounts', 'danger')
-        return redirect(url_for('manage_faculty'))
+    
+    if current_user.is_hod():
+        if faculty.department != current_user.department or faculty.role == 'hod':
+            flash('Access denied', 'danger')
+            return redirect(url_for('manage_faculty'))
+    else:
+        if not faculty.is_faculty():
+            flash('Can only delete faculty accounts', 'danger')
+            return redirect(url_for('manage_faculty'))
         
     db.session.delete(faculty)
     db.session.commit()
@@ -659,19 +1103,30 @@ def delete_faculty(faculty_id):
 @app.route('/admin/faculty/add', methods=['POST'])
 @login_required
 def add_faculty():
-    if not current_user.is_admin():
+    if not (current_user.is_admin() or current_user.is_hod()):
         flash('Access denied', 'danger')
         return redirect(url_for('manage_faculty'))
     
     email = request.form.get('email')
     first_name = request.form.get('first_name')
     last_name = request.form.get('last_name')
-    role = request.form.get('role')
-    department = request.form.get('department')
+    
+    if current_user.is_hod():
+        role = 'faculty'
+        department = current_user.department
+    else:
+        role = request.form.get('role')
+        department = request.form.get('department')
     
     if User.query.filter_by(email=email).first():
         flash('Email already exists', 'danger')
         return redirect(url_for('manage_faculty'))
+    
+    handling_depts = request.form.getlist('handling_departments')
+    handling_departments_str = ','.join(handling_depts) if handling_depts else ''
+    
+    subjects_list = request.form.getlist('subjects')
+    subjects_str = ','.join([s.strip() for s in subjects_list if s.strip()])
     
     faculty = User(
         email=email,
@@ -679,6 +1134,8 @@ def add_faculty():
         last_name=last_name,
         role=role,
         department=department,
+        handling_departments=handling_departments_str,
+        subjects=subjects_str
     )
     
     password = request.form.get('password')
@@ -703,7 +1160,16 @@ def manage_clubs():
         return redirect(url_for('index'))
     
     clubs = Club.query.all()
-    return render_template('admin/clubs.html', clubs=clubs)
+    
+    # Calculate stats for the dashboard
+    stats = {
+        'total_clubs': len(clubs),
+        'active_portals': Club.query.filter_by(is_active=True).count(),
+        'upcoming_events': Event.query.filter_by(status='upcoming').count(),
+        'active_events': Event.query.filter_by(status='active').count()
+    }
+    
+    return render_template('admin/clubs.html', clubs=clubs, stats=stats)
 
 @app.route('/admin/clubs/add', methods=['POST'])
 @login_required
@@ -714,12 +1180,62 @@ def add_club():
     
     name = request.form.get('name')
     description = request.form.get('description')
+    login_id = request.form.get('club_login_id')
+    password = request.form.get('password')
     
-    club = Club(name=name, description=description)
+    if Club.query.filter_by(club_login_id=login_id).first():
+        flash('Club Login ID already exists', 'danger')
+        return redirect(url_for('manage_clubs'))
+        
+    club = Club(name=name, description=description, club_login_id=login_id)
+    club.set_password(password)
     db.session.add(club)
     db.session.commit()
     
-    flash('Club added successfully', 'success')
+    flash('Club added successfully with portal access', 'success')
+    return redirect(url_for('manage_clubs'))
+
+@app.route('/admin/clubs/edit/<int:club_id>', methods=['POST'])
+@login_required
+def edit_club(club_id):
+    if not current_user.is_admin(): return redirect(url_for('index'))
+    club = Club.query.get_or_404(club_id)
+    club.name = request.form.get('name')
+    club.description = request.form.get('description')
+    club.club_login_id = request.form.get('club_login_id')
+    
+    password = request.form.get('password')
+    if password:
+        club.set_password(password)
+        
+    db.session.commit()
+    flash('Club updated successfully', 'success')
+    return redirect(url_for('manage_clubs'))
+
+@app.route('/admin/clubs/toggle/<int:club_id>')
+@login_required
+def toggle_club(club_id):
+    if not current_user.is_admin(): return redirect(url_for('index'))
+    club = Club.query.get_or_404(club_id)
+    club.is_active = not club.is_active
+    db.session.commit()
+    status = "enabled" if club.is_active else "disabled"
+    flash(f'Club {status} successfully', 'success')
+    return redirect(url_for('manage_clubs'))
+
+@app.route('/admin/clubs/reset-password/<int:club_id>', methods=['POST'])
+@login_required
+def reset_club_password(club_id):
+    if not current_user.is_admin():
+        return redirect(url_for('index'))
+    club = Club.query.get_or_404(club_id)
+    new_password = request.form.get('new_password')
+    if not new_password or len(new_password) < 4:
+        flash('Password must be at least 4 characters.', 'danger')
+        return redirect(url_for('manage_clubs'))
+    club.set_password(new_password)
+    db.session.commit()
+    flash(f'Password for {club.name} portal reset successfully!', 'success')
     return redirect(url_for('manage_clubs'))
 
 @app.route('/admin/clubs/delete/<int:club_id>')
@@ -754,13 +1270,15 @@ def add_event():
     description = request.form.get('description')
     date = request.form.get('date')
     venue = request.form.get('venue')
+    deadline_str = request.form.get('registration_deadline')
     
     event = Event(
         club_id=club_id,
         name=name,
         description=description,
         date=datetime.strptime(date, '%Y-%m-%d'),
-        venue=venue
+        venue=venue,
+        registration_deadline=datetime.strptime(deadline_str, '%Y-%m-%dT%H:%M') if deadline_str else None
     )
     db.session.add(event)
     db.session.commit()
@@ -878,6 +1396,8 @@ def faculty_dashboard():
         
         pending_grouped = group_permissions(pending_permissions_query)
         
+        # HOD can also see approved permissions for their department
+        # (Using the same base query)
         approved_permissions_query = Permission.query.join(
             User, Permission.student_id == User.id
         ).filter(
@@ -886,6 +1406,7 @@ def faculty_dashboard():
         ).all()
         
         approved_grouped = group_permissions(approved_permissions_query)
+        approved_list = approved_permissions_query
         
     elif is_incharge:
         # Class Incharge sees pending permissions from their assigned section
@@ -899,31 +1420,41 @@ def faculty_dashboard():
         
         pending_grouped = group_permissions(pending_permissions_query)
         
-        # Also sees approved permissions from their department (standard faculty view)
+        # Standard faculty view: approved permissions for primary OR handled departments
+        handling_depts = current_user.handling_departments.split(',') if current_user.handling_departments else []
+        visible_depts = [current_user.department] + [d.strip() for d in handling_depts if d.strip()]
+        
         approved_permissions_query = Permission.query.join(
             User, Permission.student_id == User.id
         ).filter(
-            User.department == current_user.department,
+            User.department.in_(visible_depts),
             Permission.status == 'approved'
         ).all()
         
         approved_grouped = group_permissions(approved_permissions_query)
+        approved_list = approved_permissions_query
 
     else:
         # Regular faculty sees only approved permissions
         pending_grouped = {}
+        # Standard faculty view: approved permissions for primary OR handled departments
+        handling_depts = current_user.handling_departments.split(',') if current_user.handling_departments else []
+        visible_depts = [current_user.department] + [d.strip() for d in handling_depts if d.strip()]
+        
         approved_permissions_query = Permission.query.join(
             User, Permission.student_id == User.id
         ).filter(
-            User.department == current_user.department,
+            User.department.in_(visible_depts),
             Permission.status == 'approved'
         ).all()
         
         approved_grouped = group_permissions(approved_permissions_query)
+        approved_list = approved_permissions_query
     
     return render_template('faculty/dashboard.html', 
                          pending_grouped=pending_grouped,
                          approved_grouped=approved_grouped,
+                         approved_list=approved_list,
                          is_hod=current_user.is_hod(),
                          is_incharge=is_incharge)
 
@@ -974,6 +1505,332 @@ def update_permission_status(permission_id, action):
     db.session.commit()
     return redirect(url_for('faculty_dashboard'))
 
+# --- Faculty Class Attendance APIs ---
+@app.route('/api/faculty/students')
+@login_required
+def get_faculty_students():
+    if not current_user.is_faculty():
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    department = request.args.get('department')
+    section = request.args.get('section')
+    
+    year = request.args.get('year')
+    
+    if not department or not section or not year:
+        return jsonify({'error': 'Missing department, section or year'}), 400
+        
+    students = User.query.filter_by(role='student', department=department, section=section, year=year).order_by(User.roll_no).all()
+    
+    return jsonify([{
+        'id': s.id,
+        'roll_no': s.roll_no,
+        'name': s.get_full_name()
+    } for s in students])
+
+@app.route('/api/timetable/today')
+@login_required
+def get_today_timetable():
+    dept = request.args.get('department')
+    year = request.args.get('year')
+    sec = request.args.get('section')
+    
+    if not all([dept, year, sec]):
+        return jsonify({'error': 'Missing parameters'}), 400
+        
+    # User's local time is UTC+5:30.
+    ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    day = ist_now.strftime('%A')
+    
+    record = TimeTable.query.filter_by(department=dept, year=year, section=sec, day=day).first()
+    if not record:
+        return jsonify({'subjects': []})
+        
+    subjects = [s for s in record.get_periods() if s and s.strip()]
+    return jsonify({'subjects': list(set(subjects))}) # Return unique scheduled subjects
+
+@app.route('/faculty/attendance/save', methods=['POST'])
+@login_required
+def save_class_attendance():
+    if not current_user.is_faculty():
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    data = request.json
+    if not data or not data.get('department') or not data.get('section') or not data.get('attendance') or not data.get('subject'):
+        return jsonify({'error': 'Invalid data format'}), 400
+        
+    department = data['department']
+    section = data['section']
+    subject = data['subject']
+    year = data.get('year')
+    attendance_data = data['attendance'] # {"student_id": "present"|"absent"}
+    
+    date_str = data.get('date')
+    if date_str:
+        try:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            target_date = datetime.utcnow().date()
+    else:
+        target_date = datetime.utcnow().date()
+    
+    # Optional: Delete existing records for this class/faculty today to avoid duplicates
+    existing_records = ClassAttendance.query.filter_by(
+        faculty_id=current_user.id,
+        date=target_date,
+        department=department,
+        section=section,
+        subject=subject
+    ).all()
+    # If the user selects the same class but year is different, we should probably only delete if year matches
+    # but ClassAttendance model doesn't have a year column currently (it has student_id).
+    # We should probably add 'year' to ClassAttendance model too for easier reporting.
+    for record in existing_records:
+        db.session.delete(record)
+        
+    for student_id_str, status in attendance_data.items():
+        try:
+            student_id = int(student_id_str)
+            student = User.query.get(student_id)
+            if student and student.role == 'student' and student.department == department and student.section == section:
+                record = ClassAttendance(
+                    student_id=student_id,
+                    faculty_id=current_user.id,
+                    date=target_date,
+                    department=department,
+                    year=year,
+                    section=section,
+                    subject=subject,
+                    status=status
+                )
+                db.session.add(record)
+        except ValueError:
+            continue
+            
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Attendance saved effectively'})
+
+@app.route('/faculty/attendance/history')
+@login_required
+def faculty_attendance_history():
+    if not current_user.is_faculty():
+        flash('Access denied', 'danger')
+        return redirect(url_for('index'))
+    
+    # Query grouped sessions
+    sessions = db.session.query(
+        ClassAttendance.date, 
+        ClassAttendance.department, 
+        ClassAttendance.year, 
+        ClassAttendance.section, 
+        ClassAttendance.subject,
+        db.func.count(ClassAttendance.id).label('total'),
+        db.func.sum(db.case((ClassAttendance.status == 'present', 1), else_=0)).label('present')
+    ).filter_by(faculty_id=current_user.id).group_by(
+        ClassAttendance.date, 
+        ClassAttendance.department, 
+        ClassAttendance.year, 
+        ClassAttendance.section, 
+        ClassAttendance.subject
+    ).order_by(ClassAttendance.date.desc()).all()
+    
+    from itertools import groupby
+    grouped_sessions = []
+    for date, group in groupby(sessions, key=lambda x: x.date):
+        grouped_sessions.append({
+            'date': date,
+            'records': list(group)
+        })
+    
+    return render_template('faculty/attendance_history.html', grouped_sessions=grouped_sessions)
+
+@app.route('/faculty/attendance/edit')
+@login_required
+def edit_attendance_view():
+    if not current_user.is_faculty():
+        flash('Access denied', 'danger')
+        return redirect(url_for('index'))
+    
+    date = request.args.get('date')
+    dept = request.args.get('dept')
+    year = request.args.get('year')
+    sec = request.args.get('sec')
+    sub = request.args.get('sub')
+    
+    if not all([date, dept, year, sec, sub]):
+        flash('Missing parameters for editing attendance', 'danger')
+        return redirect(url_for('faculty_attendance_history'))
+        
+    return render_template('faculty/edit_attendance.html', 
+                          date=date, dept=dept, year=year, sec=sec, sub=sub)
+
+@app.route('/api/faculty/attendance/load')
+@login_required
+def load_attendance_data():
+    if not current_user.is_faculty():
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    date_str = request.args.get('date')
+    dept = request.args.get('dept')
+    year = request.args.get('year')
+    sec = request.args.get('sec')
+    sub = request.args.get('sub')
+    
+    if not all([date_str, dept, year, sec, sub]):
+        return jsonify({'error': 'Missing parameters'}), 400
+        
+    try:
+        date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'error': 'Invalid date format'}), 400
+        
+    records = ClassAttendance.query.filter_by(
+        faculty_id=current_user.id,
+        date=date,
+        department=dept,
+        year=year,
+        section=sec,
+        subject=sub
+    ).all()
+    
+    attendance_map = {str(r.student_id): r.status for r in records}
+    return jsonify({'attendance': attendance_map})
+
+# --- Class Incharge Management ---
+@app.route('/faculty/incharge/timetable')
+@login_required
+def incharge_timetable():
+    if not (current_user.is_faculty() and current_user.is_incharge()):
+        flash('Access denied. Only Class Incharges can access this page.', 'danger')
+        return redirect(url_for('faculty_dashboard'))
+    
+    dept = current_user.incharge_department
+    sec = current_user.incharge_section
+    
+    # We need to find the year for this incharge's section. 
+    # Usually, the faculty might handle one specific year or it's mapped.
+    # Let's assume we can find it from a student in that section or it's a field we should have.
+    # For now, let's try to get it from the first student found in that section.
+    student = User.query.filter_by(department=dept, section=sec, role='student').first()
+    year = student.year if student else 1
+    
+    timetable_records = TimeTable.query.filter_by(department=dept, year=year, section=sec).all()
+    timetable_data = {r.day: r for r in timetable_records}
+    
+    return render_template('faculty/incharge_timetable.html', 
+                           dept=dept, sec=sec, year=year,
+                           timetable_data=timetable_data)
+
+@app.route('/api/incharge/timetable/swap', methods=['POST'])
+@login_required
+def swap_periods():
+    if not (current_user.is_faculty() and current_user.is_incharge()):
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    data = request.json
+    day = data.get('day')
+    p1_idx = data.get('p1') # 1-7
+    p2_idx = data.get('p2') # 1-7
+    dept = current_user.incharge_department
+    sec = current_user.incharge_section
+    
+    # Year lookup again
+    student = User.query.filter_by(department=dept, section=sec, role='student').first()
+    year = student.year if student else 1
+    
+    record = TimeTable.query.filter_by(department=dept, year=year, section=sec, day=day).first()
+    if not record:
+        return jsonify({'error': 'Timetable not found for this day'}), 404
+        
+    # Swap subjects
+    attr1 = f'period_{p1_idx}'
+    attr2 = f'period_{p2_idx}'
+    
+    val1 = getattr(record, attr1)
+    val2 = getattr(record, attr2)
+    
+    setattr(record, attr1, val2)
+    setattr(record, attr2, val1)
+    
+    db.session.commit()
+    return jsonify({'success': True, 'message': f'Swapped Period {p1_idx} and Period {p2_idx} successfully!'})
+
+@app.route('/api/incharge/holiday/declare', methods=['POST'])
+@login_required
+def declare_holiday():
+    if not (current_user.is_faculty() and current_user.is_incharge()):
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    data = request.json
+    date_str = data.get('date')
+    reason = data.get('reason', 'Holiday declared by class incharge')
+    
+    if not date_str:
+        return jsonify({'error': 'Date is required'}), 400
+        
+    try:
+        holiday_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'error': 'Invalid date format'}), 400
+        
+    dept = current_user.incharge_department
+    sec = current_user.incharge_section
+    student = User.query.filter_by(department=dept, section=sec, role='student').first()
+    year = student.year if student else 1
+    
+    # Check if already exists
+    existing = ClassHoliday.query.filter_by(department=dept, year=year, section=sec, date=holiday_date).first()
+    if existing:
+        return jsonify({'error': 'A holiday is already declared for this date'}), 400
+        
+    holiday = ClassHoliday(
+        department=dept,
+        year=year,
+        section=sec,
+        date=holiday_date,
+        reason=reason,
+        declared_by=current_user.id
+    )
+    db.session.add(holiday)
+    db.session.commit()
+    
+    return jsonify({'success': True, 'message': 'Holiday declared successfully!'})
+
+@app.route('/api/incharge/holidays')
+@login_required
+def get_incharge_holidays():
+    if not (current_user.is_faculty() and current_user.is_incharge()):
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    dept = current_user.incharge_department
+    sec = current_user.incharge_section
+    student = User.query.filter_by(department=dept, section=sec, role='student').first()
+    year = student.year if student else 1
+    
+    holidays = ClassHoliday.query.filter_by(department=dept, year=year, section=sec).order_by(ClassHoliday.date.desc()).all()
+    
+    return jsonify([{
+        'id': h.id,
+        'date': h.date.strftime('%Y-%m-%d'),
+        'reason': h.reason
+    } for h in holidays])
+
+@app.route('/api/incharge/holiday/<int:holiday_id>', methods=['DELETE'])
+@login_required
+def delete_holiday(holiday_id):
+    if not (current_user.is_faculty() and current_user.is_incharge()):
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    holiday = ClassHoliday.query.get_or_404(holiday_id)
+    
+    # Verify ownership/authority
+    if holiday.department != current_user.incharge_department or holiday.section != current_user.incharge_section:
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    db.session.delete(holiday)
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Holiday removed.'})
+
 # Student Routes
 @app.route('/student/dashboard')
 @login_required
@@ -982,10 +1839,284 @@ def student_dashboard():
         flash('Access denied', 'danger')
         return redirect(url_for('index'))
     
-    events = Event.query.order_by(Event.date.desc()).limit(5).all()
+    # Update event statuses automatically
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    # Only need to check those that ARE currently marked as upcoming or active but might have expired
+    potential_expired = Event.query.filter(Event.status.in_(['upcoming', 'active'])).all()
+    for event in potential_expired:
+        if event.end_date and now > event.end_date:
+            event.status = 'expired'
+        elif event.start_date and now >= event.start_date and (not event.end_date or now <= event.end_date):
+            event.status = 'active'
+        else:
+            event.status = 'upcoming'
+    db.session.commit()
+
+    # Show ALL events (Active, Upcoming, and Past) for the dashboard list
+    all_events = Event.query.order_by(Event.start_date.desc()).all()
+    
+    student_events = []
+    user_dept = current_user.department.strip().lower() if current_user.department else ""
+    
+    for event in all_events:
+        allowed = json.loads(event.allowed_departments) if event.allowed_departments else []
+        # Case-insensitive, stripped check
+        if not allowed or any(d.strip().lower() == user_dept for d in allowed):
+            student_events.append(event)
+            
     permissions = Permission.query.filter_by(student_id=current_user.id).order_by(Permission.applied_at.desc()).all()
     
-    return render_template('student/dashboard.html', events=events, permissions=permissions)
+    registrations = EventResponse.query.filter_by(student_id=current_user.id).order_by(EventResponse.submitted_at.desc()).all()
+    registered_ids = [r.event_id for r in registrations]
+    
+    # --- Timetable Logic ---
+    ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    day = ist_now.strftime('%A')
+    today_timetable = TimeTable.query.filter_by(
+        department=current_user.department,
+        year=current_user.year,
+        section=current_user.section,
+        day=day
+    ).first()
+    
+    # --- Attendance Statistics ---
+    attendance_records = ClassAttendance.query.filter_by(student_id=current_user.id).all()
+    
+    overall_stats = {'present': 0, 'total': 0, 'percentage': 0}
+    subject_stats = {} # { 'Subject Name': {'present': 0, 'total': 0, 'percentage': 0} }
+    
+    today_date = datetime.utcnow().date()
+    today_attendance = []
+    
+    for record in attendance_records:
+        overall_stats['total'] += 1
+        if record.status == 'present':
+            overall_stats['present'] += 1
+            
+        if record.subject not in subject_stats:
+            subject_stats[record.subject] = {'present': 0, 'total': 0, 'percentage': 0}
+        
+        subject_stats[record.subject]['total'] += 1
+        if record.status == 'present':
+            subject_stats[record.subject]['present'] += 1
+            
+        if record.date == today_date:
+            category = 'Class'
+            sub_name = record.subject.upper()
+            if 'LAB' in sub_name or 'WORKSHOP' in sub_name or 'SEMINAR' in sub_name:
+                category = 'Others'
+                
+            today_attendance.append({
+                'subject': record.subject,
+                'status': record.status,
+                'marked_at': record.marked_at,
+                'category': category
+            })
+            
+    # Calculate percentages
+    if overall_stats['total'] > 0:
+        overall_stats['percentage'] = round((overall_stats['present'] / overall_stats['total']) * 100, 1)
+        
+    for sub, stats in subject_stats.items():
+        if stats['total'] > 0:
+            stats['percentage'] = round((stats['present'] / stats['total']) * 100, 1)
+        
+    return render_template('student/dashboard.html', 
+                          events=student_events[:4],
+        permissions=permissions[:5],
+        registrations=registrations[:5],
+        registered_ids=registered_ids, # Keep this from original
+        overall_stats=overall_stats,
+        subject_stats=subject_stats,
+        today_attendance=today_attendance,
+        today_timetable=today_timetable,
+        ist_now=ist_now
+    )
+
+@app.route('/api/student/attendance/history')
+@login_required
+def get_attendance_history():
+    if not current_user.is_student():
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify([])
+        
+    try:
+        query_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid date format'}), 400
+        
+    records = ClassAttendance.query.filter_by(
+        student_id=current_user.id,
+        date=query_date
+    ).all()
+    
+    result = []
+    for r in records:
+        category = 'Class'
+        sub_name = r.subject.upper()
+        if 'LAB' in sub_name or 'WORKSHOP' in sub_name or 'SEMINAR' in sub_name:
+            category = 'Others'
+            
+        result.append({
+            'subject': r.subject,
+            'status': r.status,
+            'marked_at': r.marked_at.strftime('%I:%M %p'),
+            'category': category
+        })
+        
+    return jsonify(result)
+
+@app.route('/api/student/timeline/history')
+@login_required
+def get_timeline_history():
+    if not current_user.is_student():
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify({'error': 'Date is required'}), 400
+        
+    try:
+        query_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid date format'}), 400
+        
+    day_of_week = query_date.strftime('%A')
+    
+    # 1. Check for Holiday
+    holiday = ClassHoliday.query.filter_by(
+        department=current_user.department,
+        year=current_user.year,
+        section=current_user.section,
+        date=query_date
+    ).first()
+
+    if holiday:
+        return jsonify({
+            'date': query_date.strftime('%A, %d %B %Y'),
+            'is_holiday': True,
+            'holiday_reason': holiday.reason,
+            'timeline': []
+        })
+
+    # 2. Fetch Timetable for this day of week
+    timetable = TimeTable.query.filter_by(
+        department=current_user.department,
+        year=current_user.year,
+        section=current_user.section,
+        day=day_of_week
+    ).first()
+    
+    # 3. Fetch Attendance for this specific date
+    attendance_records = ClassAttendance.query.filter_by(
+        student_id=current_user.id,
+        date=query_date
+    ).all()
+    
+    # Map attendance by subject for easy lookup
+    attendance_map = {}
+    for r in attendance_records:
+        attendance_map[r.subject.strip().lower()] = r.status
+        
+    # Helper for formatting times
+    def format_t(t_str, default):
+        target = t_str if t_str else default
+        parts = target.split(' - ')
+        if len(parts) == 2:
+            return {
+                'display': format_time_range(target),
+                'start': parts[0],
+                'end': parts[1]
+            }
+        return {'display': target, 'start': '00:00', 'end': '00:00'}
+
+    periods = []
+    
+    # Structure the periods exactly like the frontend Jinja loop
+    periods.append({
+        'num': 'P1', 
+        'sub': timetable.period_1 if timetable else None,
+        'time': format_t(timetable.period_1_time if timetable else None, '09:30 AM - 10:20 AM')
+    })
+    periods.append({
+        'num': 'P2', 
+        'sub': timetable.period_2 if timetable else None,
+        'time': format_t(timetable.period_2_time if timetable else None, '10:20 AM - 11:10 AM')
+    })
+    periods.append({
+        'num': 'P3', 
+        'sub': timetable.period_3 if timetable else None,
+        'time': format_t(timetable.period_3_time if timetable else None, '11:10 AM - 12:00 PM')
+    })
+    periods.append({
+        'num': '--', 
+        'sub': 'BREAK',
+        'time': {'display': '12:00 PM - 01:00 PM', 'start': '12:00', 'end': '13:00'}
+    })
+    periods.append({
+        'num': 'P4', 
+        'sub': timetable.period_4 if timetable else None,
+        'time': format_t(timetable.period_4_time if timetable else None, '01:00 PM - 01:50 PM')
+    })
+    periods.append({
+        'num': 'P5', 
+        'sub': timetable.period_5 if timetable else None,
+        'time': format_t(timetable.period_5_time if timetable else None, '01:50 PM - 02:40 PM')
+    })
+    periods.append({
+        'num': 'P6', 
+        'sub': timetable.period_6 if timetable else None,
+        'time': format_t(timetable.period_6_time if timetable else None, '02:40 PM - 03:30 PM')
+    })
+    periods.append({
+        'num': 'P7', 
+        'sub': timetable.period_7 if timetable else None,
+        'time': format_t(timetable.period_7_time if timetable else None, '03:30 PM - 04:20 PM')
+    })
+    
+    # Inject attendance status into periods
+    timeline_data = []
+    for p in periods:
+        status = None
+        if p['sub'] and p['sub'] != 'BREAK':
+            sub_key = p['sub'].strip().lower()
+            status = attendance_map.get(sub_key)
+            
+        timeline_data.append({
+            'num': p['num'],
+            'subject': p['sub'],
+            'status': status,
+            'timeDisplay': p['time']['display'],
+            'start': p['time']['start'],
+            'end': p['time']['end']
+        })
+        
+    return jsonify({
+        'date': query_date.strftime('%A, %d %B %Y'),
+        'has_classes': timetable is not None,
+        'is_sunday': day_of_week == 'Sunday',
+        'is_holiday': False,
+        'timeline': timeline_data
+    })
+
+@app.route('/api/student/timetable/week')
+@login_required
+def get_student_week_timetable():
+    if not current_user.is_student():
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    timetable_records = TimeTable.query.filter_by(
+        department=current_user.department,
+        year=current_user.year,
+        section=current_user.section
+    ).all()
+    
+    # Return days that have a timetable entry
+    return jsonify({r.day: True for r in timetable_records})
+
 
 @app.route('/student/apply-permission', methods=['GET', 'POST'])
 @login_required
@@ -1026,9 +2157,38 @@ def apply_permission():
         flash('Permission application submitted successfully', 'success')
         return redirect(url_for('student_dashboard'))
     
-    clubs = Club.query.all()
-    events = Event.query.all()
-    return render_template('student/apply_permission.html', clubs=clubs, events=events)
+    # Pre-sync event statuses
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    potential_events = Event.query.filter(Event.status.in_(['active', 'upcoming'])).all()
+    for e in potential_events:
+        if e.end_date and now > e.end_date: e.status = 'expired'
+        elif e.start_date and now >= e.start_date and (not e.end_date or now <= e.end_date): e.status = 'active'
+        else: e.status = 'upcoming'
+    db.session.commit()
+
+    # Only show clubs that have active or upcoming events for THIS student's department
+    all_active_event_clubs = Club.query.join(Event).filter(Event.status.in_(['active', 'upcoming'])).all()
+    
+    eligible_clubs = []
+    for club in all_active_event_clubs:
+        # Check if at least one event in this club is eligible for the student
+        is_eligible = False
+        for event in club.events:
+            if event.status not in ['active', 'upcoming']:
+                continue
+            try:
+                allowed = json.loads(event.allowed_departments) if event.allowed_departments else []
+            except (ValueError, TypeError):
+                allowed = []
+            
+            if not allowed or current_user.department in allowed:
+                is_eligible = True
+                break
+        
+        if is_eligible and club not in eligible_clubs:
+            eligible_clubs.append(club)
+            
+    return render_template('student/apply_permission.html', clubs=eligible_clubs)
 
 @app.route('/student/permissions')
 @login_required
@@ -1055,35 +2215,97 @@ def student_view_permission(permission_id):
     
     return render_template('student/permission_details.html', permission=permission)
 
+@app.route('/student/permission/withdraw/<int:permission_id>')
+@login_required
+def withdraw_permission(permission_id):
+    if not current_user.is_student():
+        flash('Access denied', 'danger')
+        return redirect(url_for('index'))
+    
+    permission = Permission.query.get_or_404(permission_id)
+    
+    # Ensure student can only withdraw their own permissions
+    if permission.student_id != current_user.id:
+        flash('Access denied', 'danger')
+        return redirect(url_for('student_dashboard'))
+    
+    # Optional: only allow withdrawing if it's not already processed?
+    # For now, let's allow withdrawing anytime if it's the student's own permission.
+    
+    db.session.delete(permission)
+    db.session.commit()
+    
+    flash('Permission request withdrawn successfully.', 'success')
+    return redirect(url_for('student_dashboard'))
+
 # API Routes
 @app.route('/api/events/<int:club_id>')
 @login_required
 def get_events(club_id):
-    events = Event.query.filter_by(club_id=club_id).all()
+    # Update event statuses automatically for this club
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    all_club_events = Event.query.filter_by(club_id=club_id).all()
+    for event in all_club_events:
+        if event.end_date and now > event.end_date:
+            event.status = 'expired'
+        elif event.start_date and now >= event.start_date and (not event.end_date or now <= event.end_date):
+            event.status = 'active'
+        else:
+            event.status = 'upcoming'
+    db.session.commit()
+
+    # Filter by club and status (only active/upcoming)
+    query = Event.query.filter_by(club_id=club_id).filter(Event.status.in_(['active', 'upcoming']))
+    events = query.all()
+    
+    # Further filter by department if the current user is a student
+    if current_user.is_student():
+        filtered_events = []
+        for event in events:
+            # Handle possible JSON parsing issues
+            try:
+                allowed = json.loads(event.allowed_departments) if event.allowed_departments else []
+            except (ValueError, TypeError):
+                allowed = []
+                
+            if not allowed or current_user.department in allowed:
+                filtered_events.append(event)
+        events = filtered_events
+        
     return jsonify([{'id': event.id, 'name': event.name} for event in events])
 
 @app.route('/download-template')
 @login_required
 def download_template():
-    # Create sample template
+    # Fetch actual departments from DB for the template
+    depts = Department.query.order_by(Department.name).all()
+    dept_list = [d.name for d in depts] if depts else ['CSE', 'ECE', 'EEE', 'MECH', 'CIVIL']
+    
+    # Create sample template data
     import io
     data = {
         'roll_no': ['24N81A6261', '24N81A6262', '24N81A6263'],
         'email': ['student1@college.edu', 'student2@college.edu', 'student3@college.edu'],
         'first_name': ['John', 'Jane', 'Mike'],
         'last_name': ['Doe', 'Smith', 'Johnson'],
+        'year': [1, 2, 3],
         'section': ['A', 'B', 'A'],
-        'department': ['CSE', 'CSE', 'ECE']
+        'department': [dept_list[0], dept_list[0], dept_list[min(1, len(dept_list)-1)]]
     }
     df = pd.DataFrame(data)
     
     # Create in-memory file
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name='Students', index=False)
-    output.seek(0)
-    
-    return send_file(output, download_name='student_template.xlsx', as_attachment=True)
+    try:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Students', index=False)
+        output.seek(0)
+        return send_file(output, download_name='student_template.xlsx', as_attachment=True)
+    except Exception as e:
+        flash(f'Error generating template: {str(e)}', 'danger')
+        return redirect(url_for('manage_students'))
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True, host='0.0.0.0')

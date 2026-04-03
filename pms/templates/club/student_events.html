@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Discover Club Events{% endblock %}
+{% block page_title %}Event Portal{% endblock %}
+
+{% block content %}
+<style>
+    :root {
+        --event-card-bg: #ffffff;
+        --text-dark: #2d3436;
+        --text-muted: #636e72;
+        --primary-blue: #0984e3;
+        --danger-red: #d63031;
+        --success-green: #27ae60;
+    }
+
+    .event-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 2rem;
+        padding-top: 1rem;
+    }
+
+    .event-card {
+        background: var(--event-card-bg);
+        border-radius: 20px;
+        border: 1px solid rgba(0,0,0,0.05);
+        padding: 1.5rem;
+        transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.02);
+    }
+
+    .event-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.08);
+    }
+
+    .status-badge {
+        font-size: 0.75rem;
+        padding: 4px 12px;
+        border-radius: 8px;
+        font-weight: 700;
+        text-transform: capitalize;
+        background: #f1f2f6;
+        color: var(--text-muted);
+    }
+
+    .status-active { background: #e3f9e5; color: #27ae60; }
+    .status-upcoming { background: #e0f2ff; color: #0984e3; }
+    .status-expired { background: #718093; color: white; }
+
+    .participation-type {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        font-weight: 600;
+    }
+
+    .event-title {
+        color: var(--text-dark);
+        font-weight: 800;
+        margin-top: 1rem;
+        font-size: 1.25rem;
+    }
+
+    .event-desc {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        line-height: 1.5;
+        margin-bottom: 1.5rem;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .info-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.75rem;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+
+    .info-row i {
+        width: 24px;
+        font-size: 0.9rem;
+    }
+
+    .info-row.registration-closed { color: var(--danger-red); }
+    .info-row.deadline { color: var(--success-green); }
+    .info-icon-blue { color: var(--primary-blue); }
+
+    .btn-status {
+        width: 100%;
+        border-radius: 12px;
+        padding: 0.75rem;
+        font-weight: 700;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+        border: 1px solid transparent;
+    }
+
+    .btn-already-registered {
+        background: rgba(39, 174, 96, 0.05);
+        border-color: var(--success-green);
+        color: var(--success-green);
+        cursor: default;
+    }
+
+    .btn-registration-closed {
+        background: #95a5a6;
+        color: white;
+        cursor: not-allowed;
+    }
+
+    .btn-apply {
+        background: var(--primary-blue);
+        color: white;
+        border: none;
+    }
+    .btn-apply:hover {
+        background: #0773c5;
+        box-shadow: 0 4px 15px rgba(9, 132, 227, 0.3);
+    }
+</style>
+
+<div class="container py-4">
+    <div class="mb-5 text-center">
+        <h2 class="fw-bold mb-1" style="color: var(--text-dark);">Discover Club Events</h2>
+        <p class="text-muted pb-4">Exclusive events for {{ current_user.department }} department and more!</p>
+    </div>
+
+    <div class="event-grid">
+        {% for event in events %}
+        <div class="event-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <span class="status-badge status-{{ event.status }}">{{ event.status }}</span>
+                <span class="participation-type">
+                    {% if event.participation_type == 'solo' %}
+                    <i class="fas fa-user me-1"></i>
+                    {% else %}
+                    <i class="fas fa-users me-1"></i>
+                    {% endif %}
+                    {{ event.participation_type|capitalize }}
+                </span>
+            </div>
+
+            <h5 class="event-title">{{ event.name }}</h5>
+            <p class="event-desc">{{ event.description }}</p>
+
+            <div class="event-info mb-4">
+                {% if event.status == 'expired' %}
+                <div class="info-row text-muted">
+                    <i class="fas fa-calendar-times me-2"></i> Event Concluded
+                </div>
+                {% elif not event.is_registration_open %}
+                <div class="info-row registration-closed">
+                    <i class="fas fa-hourglass-end me-2"></i> Registration Closed
+                </div>
+                {% elif event.registration_deadline %}
+                <div class="info-row deadline">
+                    <i class="fas fa-hourglass-half me-2"></i> Deadline: {{ event.registration_deadline.strftime('%b %d, %H:%M') }}
+                </div>
+                {% endif %}
+
+                {% if event.start_date %}
+                <div class="info-row">
+                    <i class="fas fa-calendar-alt info-icon-blue me-2"></i> {{ event.start_date.strftime('%B %d, %Y') }}
+                </div>
+                <div class="info-row">
+                    <i class="fas fa-clock info-icon-blue me-2"></i> {{ event.start_date.strftime('%I:%M %p') }}
+                </div>
+                {% endif %}
+                
+                <div class="info-row">
+                    <i class="fas fa-map-marker-alt info-icon-blue me-2"></i> {{ event.venue }}
+                </div>
+            </div>
+
+            <div class="card-action">
+                {% if event.status == 'expired' %}
+                    {% if event.id in registered_ids %}
+                    <div class="btn-status btn-registration-closed">
+                        <i class="fas fa-check-circle me-2"></i> Registered (Event Ended)
+                    </div>
+                    {% else %}
+                    <div class="btn-status btn-registration-closed">
+                        <i class="fas fa-calendar-times me-2"></i> Event Ended
+                    </div>
+                    {% endif %}
+                {% elif event.id in registered_ids %}
+                <div class="btn-status btn-already-registered">
+                    <i class="fas fa-check-circle me-2"></i> Already Registered
+                </div>
+                {% elif not event.is_registration_open %}
+                <div class="btn-status btn-registration-closed">
+                    <i class="fas fa-lock me-2"></i> Registration Closed
+                </div>
+                {% else %}
+                <a href="{{ url_for('club_portal.apply_event', event_id=event.id) }}" class="btn-status btn-apply text-decoration-none">
+                    Apply Now <i class="fas fa-arrow-right ms-2"></i>
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12 text-center py-5">
+            <div class="bg-white p-5 rounded-4 shadow-sm">
+                <i class="fas fa-calendar-times fa-4x text-light mb-3"></i>
+                <h5 class="fw-bold">No events available right now</h5>
+                <p class="text-muted">Check back later for new club activities.</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+

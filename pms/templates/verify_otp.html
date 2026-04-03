@@ -1,51 +1,43 @@
 {% extends "base.html" %}
-{% block title %}Verify OTP - PMS{% endblock %}
+{% block title %}Verify OTP — GenZCampus{% endblock %}
 
 {% block auth_content %}
-<div class="container-fluid" style="min-height: 100vh; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-    <div class="row justify-content-center align-items-center h-100" style="min-height: 100vh;">
-        <div class="col-md-5 col-lg-4">
-            <div class="card shadow-lg border-0 rounded-lg">
-                <div class="card-body p-5 text-center">
-                    <div class="mb-4">
-                        <i class="fas fa-shield-alt fa-3x text-primary"></i>
-                    </div>
-                    <h3 class="font-weight-bold text-dark mb-4">Email Verification</h3>
-                    <p class="text-muted mb-4">
-                        We've sent a 6-digit verification code to<br>
-                        <strong>{{ email }}</strong>
-                    </p>
-
-                    <form method="POST">
-                        <div class="form-group mb-4">
-                            <label class="form-label text-start w-100 fw-bold text-secondary small">ENTER OTP
-                                CODE</label>
-                            <input type="text" class="form-control form-control-lg text-center fw-bold letter-spacing-2"
-                                name="otp" placeholder="000000" maxlength="6" required
-                                style="font-size: 1.5rem; letter-spacing: 5px; border: 2px solid #e1e5ea; height: 60px;">
-                        </div>
-
-                        <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary btn-lg shadow-sm">
-                                Verify Account <i class="fas fa-arrow-right ms-2"></i>
-                            </button>
-                        </div>
-                    </form>
-
-                    <div class="mt-4">
-                        <p class="small text-muted mb-0">
-                            Didn't receive the code? <br>
-                            <span class="text-muted">Check your Spam folder or contact Admin.</span>
-                        </p>
-                    </div>
-                </div>
-                <div class="card-footer text-center py-3 bg-light border-0 rounded-bottom">
-                    <a href="{{ url_for('login') }}" class="text-decoration-none small text-muted">
-                        <i class="fas fa-arrow-left me-1"></i> Back to Login
-                    </a>
-                </div>
-            </div>
-        </div>
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);padding:24px 16px;">
+  <div class="animate-in" style="width:100%;max-width:400px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--r-2xl);box-shadow:var(--shadow-lg);overflow:hidden;">
+    <div style="padding:32px 32px 24px;text-align:center;border-bottom:1px solid var(--border);">
+      <div style="width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,var(--clr-primary),var(--clr-accent));display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;margin-bottom:16px;box-shadow:0 6px 20px rgba(124,58,237,0.3);">
+        <i class="fas fa-shield-alt"></i>
+      </div>
+      <h3 style="font-size:18px;font-weight:800;color:var(--text-main);margin-bottom:8px;">Email Verification</h3>
+      <p style="font-size:13.5px;color:var(--text-muted);">
+        We've sent a 6-digit code to<br>
+        <strong style="color:var(--clr-primary);">{{ email }}</strong>
+      </p>
     </div>
+    <div style="padding:28px 32px;">
+      <form method="POST">
+        <div class="mb-4">
+          <label class="form-label text-center w-100">Enter OTP Code</label>
+          <input type="text" class="form-control text-center" name="otp"
+            placeholder="000000" maxlength="6" required
+            style="font-family:var(--font-code);font-size:28px;letter-spacing:8px;font-weight:800;height:64px;border-width:2px;">
+        </div>
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="fas fa-arrow-right me-2"></i>Verify Account
+        </button>
+      </form>
+      <p style="font-size:12.5px;color:var(--text-muted);text-align:center;margin-top:20px;">
+        Didn't receive the code? Check your Spam folder or contact Admin.
+      </p>
+    </div>
+    <div style="padding:16px 32px;border-top:1px solid var(--border);text-align:center;">
+      <a href="{{ url_for('login') }}" style="font-size:13px;color:var(--text-muted);text-decoration:none;">
+        <i class="fas fa-arrow-left me-1"></i>Back to Login
+      </a>
+    </div>
+  </div>
 </div>
+<script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
 {% endblock %}
+
+

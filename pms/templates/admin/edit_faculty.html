@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Edit Faculty - PMS{% endblock %}
+{% block title %}Edit Faculty - GenZCampus{% endblock %}
 {% block page_title %}Edit Faculty{% endblock %}
 
 {% block content %}
@@ -32,6 +32,61 @@
                     <div class="mb-3">
                         <label class="form-label">Phone</label>
                         <input type="text" class="form-control" name="phone" value="{{ faculty.phone }}">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {% if current_user.is_admin() %}
+                            <label class="form-label">Primary Department</label>
+                            <select class="form-select" name="department" required>
+                                {% for dept in departments %}
+                                <option value="{{ dept.name }}" {% if faculty.department==dept.name %}selected{% endif
+                                    %}>{{ dept.name }}</option>
+                                {% endfor %}
+                            </select>
+                            {% else %}
+                            <label class="form-label text-muted">Primary Department</label>
+                            <input type="text" class="form-control" name="department" value="{{ faculty.department }}" readonly>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            {% if current_user.is_admin() %}
+                            <label class="form-label">Role</label>
+                            <select class="form-select" name="role" required>
+                                <option value="faculty" {% if faculty.role=='faculty' %}selected{% endif %}>Faculty
+                                </option>
+                                <option value="hod" {% if faculty.role=='hod' %}selected{% endif %}>HOD</option>
+                            </select>
+                            {% else %}
+                            <label class="form-label text-muted">Role</label>
+                            <input type="text" class="form-control" name="role" value="{{ faculty.role }}" readonly>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <label class="form-label text-muted small text-uppercase fw-bold">Handling Departments (Secondary)</label>
+                            {% set handled = faculty.handling_departments.split(',') if faculty.handling_departments else [] %}
+                            <select class="form-select select2-edit-departments" name="handling_departments" multiple="multiple" style="width: 100%;">
+                                {% for dept in departments %}
+                                <option value="{{ dept.name }}" {% if dept.name in handled %}selected{% endif %}>{{ dept.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text mt-2"><i class="fas fa-info-circle me-1"></i>Select additional assigned departments.</div>
+                        </div>
+                        <div class="col-12 mt-3">
+                            <label class="form-label text-muted small text-uppercase fw-bold">Subjects Taught (Secondary)</label>
+                            {% set assigned_subjects = faculty.subjects.split(',') if faculty.subjects else [] %}
+                            <select class="form-select select2-edit-subjects" name="subjects" multiple="multiple" style="width: 100%;">
+                                {% for sub in assigned_subjects %}
+                                    {% if sub.strip() %}
+                                        <option value="{{ sub.strip() }}" selected>{{ sub.strip() }}</option>
+                                    {% endif %}
+                                {% endfor %}
+                            </select>
+                            <div class="form-text mt-2"><i class="fas fa-info-circle me-1"></i>Type a subject and press Enter to add it.</div>
+                        </div>
                     </div>
 
                     <hr>
@@ -89,3 +144,31 @@
     </div>
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script>
+    $(document).ready(function() {
+        $('.select2-edit-departments').select2({
+            placeholder: "Select Departments...",
+            allowClear: true,
+            theme: "bootstrap-5"
+        });
+        
+        $('.select2-edit-subjects').select2({
+            placeholder: "Type subjects and press Enter...",
+            tags: true,
+            tokenSeparators: [','],
+            theme: "bootstrap-5"
+        });
+        
+        // Custom styling for Select2
+        $('.select2-container .select2-selection--multiple').css({
+            'min-height': '38px',
+            'border': '1px solid #ced4da',
+            'border-radius': '0.375rem'
+        });
+    });
+</script>
+{% endblock %}
+
+

@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}Register for {{ event.name }}{% endblock %}
+{% block page_title %}Event Registration{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        <div class="card p-4 shadow-sm border-0">
+            <div class="text-center mb-4">
+                <h3 class="fw-bold mb-0">Event Registration</h3>
+                <p class="text-primary fw-bold mb-0">{{ event.name }}</p>
+                <hr class="w-25 mx-auto">
+            </div>
+
+            <form method="POST">
+                <!-- Auto-filled Section -->
+                <div class="bg-light p-3 rounded mb-4">
+                    <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-user-circle me-1"></i>
+                        Profile Details (Auto-filled)</h6>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="small text-muted mb-1">Full Name</label>
+                            <div class="fw-bold">{{ current_user.get_full_name() }}</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="small text-muted mb-1">Roll Number</label>
+                            <div class="fw-bold text-uppercase">{{ current_user.roll_no }}</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="small text-muted mb-1">Email</label>
+                            <div class="small fw-bold">{{ current_user.email }}</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="small text-muted mb-1">Department & Section</label>
+                            <div class="fw-bold">{{ current_user.department }} - {{ current_user.section }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                {% if event.participation_type != 'solo' %}
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Participation Selection</label>
+                    <div class="row g-3">
+                        {% if event.participation_type in ['solo', 'both'] %}
+                        <div class="col-md-6">
+                            <div class="form-check card p-3 border h-100 cursor-pointer hover-bg-light"
+                                onclick="toggleTeamFields(false)">
+                                <input class="form-check-input" type="radio" name="participation_choice" value="solo"
+                                    id="solo" checked>
+                                <label class="form-check-label w-100" for="solo">
+                                    <div class="fw-bold">Individual (Solo)</div>
+                                    <small class="text-muted">Register as a single participant</small>
+                                </label>
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if event.participation_type in ['team', 'both'] %}
+                        <div class="col-md-6">
+                            <div class="form-check card p-3 border h-100 cursor-pointer hover-bg-light"
+                                onclick="toggleTeamFields(true)">
+                                <input class="form-check-input" type="radio" name="participation_choice" value="team"
+                                    id="team" {% if event.participation_type=='team' %}checked{% endif %}>
+                                <label class="form-check-label w-100" for="team">
+                                    <div class="fw-bold">Team Entry</div>
+                                    <small class="text-muted">Register with a group</small>
+                                </label>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Team Specific Fields (Hidden by default unless team selected) -->
+                <div id="team_fields" class="mb-4 p-3 border rounded bg-light"
+                    style="display: {{ 'block' if event.participation_type == 'team' else 'none' }};">
+                    <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-users me-1"></i> Team
+                        Configuration</h6>
+                    <div class="mb-3">
+                        <label class="form-label">Action</label>
+                        <select class="form-select" name="team_action" id="team_action" onchange="toggleTeamAction()">
+                            <option value="create">Create New Team</option>
+                            <option value="join">Join Existing Team</option>
+                        </select>
+                    </div>
+
+                    <div id="create_team_group">
+                        <label class="form-label">Team Name <span class="text-danger">*</span></label>
+                        <input type="text" name="team_name" class="form-control" placeholder="Enter your team name">
+                        <small class="text-muted">A unique team code will be generated for you after
+                            registration.</small>
+                    </div>
+
+                    <div id="join_team_group" style="display: none;">
+                        <label class="form-label">Team Code <span class="text-danger">*</span></label>
+                        <input type="text" name="team_code" class="form-control" placeholder="e.g. ABC123">
+                        <small class="text-muted">Get this code from your team leader.</small>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Dynamic Custom Form Fields -->
+                {% if schema %}
+                <div class="mb-4">
+                    <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-list-ul me-1"></i> Event
+                        Specific Info</h6>
+                    {% for field in schema %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ field.label }} {% if field.required %}<span
+                                class="text-danger">*</span>{% endif %}</label>
+
+                        {% if field.type == 'text' %}
+                        <input type="text" name="field_{{ field.label }}" class="form-control" {% if field.required
+                            %}required{% endif %}>
+                        {% elif field.type == 'number' %}
+                        <input type="number" name="field_{{ field.label }}" class="form-control" {% if field.required
+                            %}required{% endif %}>
+                        {% elif field.type == 'textarea' %}
+                        <textarea name="field_{{ field.label }}" class="form-control" rows="3" {% if field.required
+                            %}required{% endif %}></textarea>
+                        {% elif field.type == 'dropdown' %}
+                        <select name="field_{{ field.label }}" class="form-select" {% if field.required %}required{%
+                            endif %}>
+                            <option value="">Select Options</option>
+                            {% for opt in field.options %}
+                            <option value="{{ opt }}">{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                        {% elif field.type == 'checkbox' %}
+                        <div class="form-check mt-1">
+                            <input class="form-check-input" type="checkbox" name="field_{{ field.label }}" value="Yes"
+                                id="f_{{ loop.index }}">
+                            <label class="form-check-label" for="f_{{ loop.index }}">Confirm</label>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                {% if not event.is_registration_open %}
+                <div class="alert alert-danger text-center py-4 mb-4">
+                    <i class="fas fa-lock fa-3x mb-3"></i>
+                    <h5 class="fw-bold">Registrations Closed</h5>
+                    <p class="mb-0">Registrations for this event are currently closed.</p>
+                    {% if event.registration_deadline %}
+                    <p class="small mt-1">The deadline was {{ event.registration_deadline.strftime('%B %d, %Y at %H:%M')
+                        }}.</p>
+                    {% endif %}
+                    <a href="{{ url_for('club_portal.student_events') }}"
+                        class="btn btn-outline-danger btn-sm mt-3">Back to Events</a>
+                </div>
+                {% else %}
+                <div class="d-grid mt-5">
+                    <button type="submit" class="btn btn-primary btn-lg py-3 fw-bold">
+                        Confirm Registration <i class="fas fa-ticket-alt ms-2"></i>
+                    </button>
+                    <p class="text-center text-muted small mt-3">By clicking, you agree to follow club rules and event
+                        guidelines.</p>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+    function toggleTeamFields(show) {
+        const teamFields = document.getElementById('team_fields');
+        if (show) {
+            teamFields.style.display = 'block';
+            document.getElementById('team_action').setAttribute('required', 'required');
+        } else {
+            teamFields.style.display = 'none';
+            document.getElementById('team_action').removeAttribute('required');
+        }
+    }
+
+    function toggleTeamAction() {
+        const action = document.getElementById('team_action').value;
+        const createGroup = document.getElementById('create_team_group');
+        const joinGroup = document.getElementById('join_team_group');
+
+        if (action === 'create') {
+            createGroup.style.display = 'block';
+            joinGroup.style.display = 'none';
+            createGroup.querySelector('input').setAttribute('required', 'required');
+            joinGroup.querySelector('input').removeAttribute('required');
+        } else {
+            createGroup.style.display = 'none';
+            joinGroup.style.display = 'block';
+            createGroup.querySelector('input').removeAttribute('required');
+            joinGroup.querySelector('input').setAttribute('required', 'required');
+        }
+    }
+
+    // Initialize on load
+    window.onload = function () {
+        const teamRadio = document.getElementById('team');
+        if (teamRadio && teamRadio.checked) {
+            toggleTeamFields(true);
+        }
+        toggleTeamAction();
+    };
+</script>
+
+<style>
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    .hover-bg-light:hover {
+        background-color: #f8f9fa;
+    }
+
+    .form-check-input:checked+.form-check-label .card {
+        border-color: var(--bs-primary) !important;
+        background-color: #f0f7ff;
+    }
+</style>
+{% endblock %}
+
+

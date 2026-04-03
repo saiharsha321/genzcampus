@@ -16,7 +16,7 @@ def run_command(command):
 
 def setup_project():
     """Setup the project for deployment"""
-    print("Setting up PMS Project...")
+    print("Setting up GenZCampus Project...")
     
     # Create necessary directories
     directories = ['instance', 'uploads', 'static/css', 'static/js', 'templates/admin', 'templates/faculty', 'templates/student']
@@ -39,7 +39,7 @@ def setup_project():
     print("\n🎯 Next steps:")
     print("1. Run: python app.py")
     print("2. Open: http://localhost:5000")
-    print("3. Admin login: admin@pms.com / admin123")
+    print("3. Admin login: admin@genzcampus.com / admin123")
 
 if __name__ == "__main__":
     setup_project()

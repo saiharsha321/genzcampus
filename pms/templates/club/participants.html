@@ -1,0 +1,98 @@
+{% extends "club/layout.html" %}
+
+{% block title %}Participants - {{ event.name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-0"><i class="fas fa-users text-primary me-2"></i> Event Participants</h4>
+        <small class="text-muted">{{ event.name }}</small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('club_portal.export_participants', event_id=event.id) }}" class="btn btn-success btn-sm">
+            <i class="fas fa-file-excel me-1"></i> Export to Excel
+        </a>
+        <a href="{{ url_for('club_portal.dashboard') }}" class="btn btn-light btn-sm border">
+            <i class="fas fa-arrow-left me-1"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light text-muted small text-uppercase fw-bold">
+                    <tr>
+                        <th class="px-4 py-3">Student Details</th>
+                        <th class="py-3">Ticket ID</th>
+                        <th class="py-3">Registration Date</th>
+                        <th class="py-3">Custom Fields</th>
+                        <th class="px-4 py-3 text-end">Attendance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in responses %}
+                    <tr>
+                        <td class="px-4">
+                            <div class="fw-bold">{{ r.student.get_full_name() }}</div>
+                            <div class="small text-muted">{{ r.student.roll_no }} | {{ r.student.department }}</div>
+                        </td>
+                        <td>
+                            <code class="text-primary fw-bold small">{{ r.ticket_id }}</code>
+                        </td>
+                        <td class="small">
+                            {{ r.submitted_at.strftime('%d %b, %Y') if r.submitted_at else 'N/A' }}<br>
+                            <span class="text-muted">{{ r.submitted_at.strftime('%H:%M') if r.submitted_at else ''
+                                }}</span>
+                        </td>
+                        <td>
+                            <div style="max-width: 250px;">
+                                {% for key, value in r.custom_data.items() %}
+                                <div class="small mb-1">
+                                    <span class="text-muted">{{ key }}:</span> {{ value }}
+                                </div>
+                                {% else %}
+                                <span class="text-muted small italic">No additional info</span>
+                                {% endfor %}
+                            </div>
+                        </td>
+                        <td class="px-4 text-end">
+                            {% if r.attendance %}
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                <i class="fas fa-check-circle me-1"></i> Present
+                                <small class="d-block text-muted">({{ r.attendance|length }} sessions)</small>
+                            </span>
+                            {% else %}
+                            <span class="badge bg-light text-muted border">
+                                <i class="fas fa-clock me-1"></i> Not Scanned
+                            </span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center py-5 text-muted">
+                            <i class="fas fa-user-slash d-block mb-2 fs-2 opacity-25"></i>
+                            No students have registered for this event yet.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    .bg-success-subtle {
+        background-color: #e8f5e9 !important;
+    }
+
+    .border-success-subtle {
+        border-color: #c8e6c9 !important;
+    }
+</style>
+{% endblock %}
+
+
