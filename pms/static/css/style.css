@@ -132,7 +132,6 @@
 
   /* Legacy */
   --bg-color:    var(--bg);
-  --card-bg:     var(--card-bg);
   --border-color: var(--border);
   --table-header-bg: var(--bg-secondary);
   --main-content-bg: var(--bg);
@@ -196,6 +195,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .bg-main   { background-color: var(--bg) !important; }
 .bg-card   { background-color: var(--card-bg) !important; }
+.bg-surface-secondary { background-color: var(--bg-secondary) !important; }
 .bg-primary-soft { background-color: var(--clr-primary-light) !important; }
 
 .border-main { border-color: var(--border) !important; }
@@ -713,6 +713,7 @@ h1, h2, h3, h4, h5, h6 {
    ============================================================ */
 .table {
   color: var(--text-main);
+  background-color: transparent !important;
 }
 
 .table thead th {
@@ -730,6 +731,7 @@ h1, h2, h3, h4, h5, h6 {
 .table tbody td {
   border-color: var(--border) !important;
   color: var(--text-main);
+  background-color: transparent !important;
   vertical-align: middle;
   padding: 12px 16px;
 }

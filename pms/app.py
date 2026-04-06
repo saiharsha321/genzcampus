@@ -118,7 +118,7 @@ def index():
             return redirect(url_for('student_dashboard'))
         else:
             return redirect(url_for('faculty_dashboard'))
-    return render_template('index.html')
+    return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -139,7 +139,7 @@ def login():
                 if p_check:
                     if user.is_blocked:
                         flash('Your account has been blocked. Please contact admin.', 'danger')
-                        return redirect(url_for('login'))
+                        return redirect(url_for('index'))
                     if user.role == 'student' and not user.is_verified:
                         flash('Please verify your email first', 'warning')
                         return redirect(url_for('verify_otp', user_id=user.id))
@@ -155,7 +155,7 @@ def login():
                 if p_check:
                     if not club.is_active:
                         flash('This club portal has been deactivated by the admin.', 'danger')
-                        return redirect(url_for('login'))
+                        return redirect(url_for('index'))
                     session['club_id'] = club.id
                     session['club_name'] = club.name
                     session['role'] = 'President'
@@ -261,7 +261,7 @@ def student_signup():
 def verify_otp(user_id):
     user = User.query.get_or_404(user_id)
     if user.is_verified:
-        return redirect(url_for('login'))
+        return redirect(url_for('index'))
         
     if request.method == 'POST':
         otp = request.form.get('otp')
@@ -271,7 +271,7 @@ def verify_otp(user_id):
             user.otp_expiry = None
             db.session.commit()
             flash('Account verified successfully! Please login.', 'success')
-            return redirect(url_for('login'))
+            return redirect(url_for('index'))
         else:
             flash('Invalid or expired OTP', 'danger')
             
@@ -340,7 +340,7 @@ def reset_password(user_id):
                 user.otp_expiry = None
                 db.session.commit()
                 flash('Password reset successful', 'success')
-                return redirect(url_for('login'))
+                return redirect(url_for('index'))
             else:
                 flash('Passwords do not match', 'danger')
         else:
@@ -389,7 +389,6 @@ def edit_profile():
 
 # Serve uploaded files
 @app.route('/uploads/<filename>')
-@login_required
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 

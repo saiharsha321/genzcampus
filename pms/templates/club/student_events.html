@@ -1,73 +1,115 @@
 {% extends "base.html" %}
 
-{% block title %}Discover Club Events{% endblock %}
+{% block title %}Discover Club Events - GenZCampus{% endblock %}
 {% block page_title %}Event Portal{% endblock %}
 
 {% block content %}
 <style>
+    /* Premium Event Portal Design Tokens */
     :root {
-        --event-card-bg: #ffffff;
-        --text-dark: #2d3436;
-        --text-muted: #636e72;
-        --primary-blue: #0984e3;
-        --danger-red: #d63031;
-        --success-green: #27ae60;
+        --event-accent: 124, 58, 237; /* #7C3AED */
+        --glass-border: rgba(255, 255, 255, 0.2);
+        --card-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
     }
 
-    .event-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-        gap: 2rem;
-        padding-top: 1rem;
+    [data-theme="dark"] {
+        --glass-border: rgba(255, 255, 255, 0.1);
+        --card-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
     }
 
-    .event-card {
-        background: var(--event-card-bg);
-        border-radius: 20px;
-        border: 1px solid rgba(0,0,0,0.05);
-        padding: 1.5rem;
-        transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+    /* Modern Header */
+    .event-portal-header {
+        background: linear-gradient(135deg, rgba(var(--event-accent), 0.9) 0%, #6366F1 100%);
+        border-radius: 28px;
+        padding: 3rem 2rem;
+        color: white;
+        margin-bottom: 2.5rem;
         position: relative;
         overflow: hidden;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.02);
+        box-shadow: 0 10px 40px -10px rgba(var(--event-accent), 0.4);
     }
 
-    .event-card:hover {
-        transform: translateY(-8px);
-        box-shadow: 0 12px 30px rgba(0,0,0,0.08);
+    .event-portal-header::before {
+        content: '';
+        position: absolute;
+        top: -100px;
+        right: -100px;
+        width: 300px;
+        height: 300px;
+        background: radial-gradient(circle, rgba(255,255,255,0.2) 0%, transparent 70%);
+        border-radius: 50%;
     }
 
-    .status-badge {
-        font-size: 0.75rem;
-        padding: 4px 12px;
-        border-radius: 8px;
+    /* Grid Layout */
+    .event-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 2rem;
+    }
+
+    /* Premium Glassmorphic Cards */
+    .premium-event-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        padding: 1.75rem;
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        box-shadow: var(--card-shadow);
+    }
+
+    .premium-event-card:hover {
+        transform: translateY(-10px) scale(1.02);
+        border-color: rgba(var(--event-accent), 0.5);
+        box-shadow: 0 20px 40px -10px rgba(var(--event-accent), 0.15);
+    }
+
+    .badge-wrap {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.25rem;
+    }
+
+    .status-badge-lg {
+        padding: 6px 16px;
+        border-radius: 12px;
         font-weight: 700;
-        text-transform: capitalize;
-        background: #f1f2f6;
-        color: var(--text-muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
 
-    .status-active { background: #e3f9e5; color: #27ae60; }
-    .status-upcoming { background: #e0f2ff; color: #0984e3; }
-    .status-expired { background: #718093; color: white; }
+    .status-upcoming { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+    .status-active   { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+    .status-expired  { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
 
-    .participation-type {
-        font-size: 0.85rem;
+    .participation-pill {
+        background: var(--bg-secondary);
         color: var(--text-muted);
+        padding: 4px 12px;
+        border-radius: 50px;
+        font-size: 0.72rem;
         font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
     }
 
-    .event-title {
-        color: var(--text-dark);
+    .event-name {
+        font-size: 1.35rem;
         font-weight: 800;
-        margin-top: 1rem;
-        font-size: 1.25rem;
+        color: var(--text-main);
+        margin-bottom: 0.75rem;
+        line-height: 1.2;
     }
 
     .event-desc {
         color: var(--text-muted);
-        font-size: 0.9rem;
-        line-height: 1.5;
+        font-size: 0.92rem;
+        line-height: 1.6;
         margin-bottom: 1.5rem;
         display: -webkit-box;
         -webkit-line-clamp: 2;
@@ -75,150 +117,204 @@
         overflow: hidden;
     }
 
-    .info-row {
+    .event-meta-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin-bottom: 2rem;
+        flex-grow: 1;
+    }
+
+    .meta-item {
         display: flex;
         align-items: center;
-        margin-bottom: 0.75rem;
-        font-size: 0.9rem;
+        gap: 12px;
+        color: var(--text-secondary);
+        font-size: 0.88rem;
         font-weight: 500;
     }
 
-    .info-row i {
-        width: 24px;
-        font-size: 0.9rem;
-    }
-
-    .info-row.registration-closed { color: var(--danger-red); }
-    .info-row.deadline { color: var(--success-green); }
-    .info-icon-blue { color: var(--primary-blue); }
-
-    .btn-status {
-        width: 100%;
-        border-radius: 12px;
-        padding: 0.75rem;
-        font-weight: 700;
-        font-size: 0.9rem;
+    .meta-item i {
+        width: 32px;
+        height: 32px;
+        background: var(--bg-secondary);
+        border-radius: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
-        transition: all 0.2s;
-        border: 1px solid transparent;
+        color: rgba(var(--event-accent), 1);
+        font-size: 0.85rem;
     }
 
-    .btn-already-registered {
-        background: rgba(39, 174, 96, 0.05);
-        border-color: var(--success-green);
-        color: var(--success-green);
-        cursor: default;
-    }
+    .meta-item.deadline-warning i { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+    .meta-item.deadline-okay i { background: rgba(16, 185, 129, 0.1); color: #10b981; }
 
-    .btn-registration-closed {
-        background: #95a5a6;
+    /* Action Buttons */
+    .apply-btn {
+        width: 100%;
+        padding: 14px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(var(--event-accent), 1) 0%, #6366F1 100%);
         color: white;
-        cursor: not-allowed;
-    }
-
-    .btn-apply {
-        background: var(--primary-blue);
-        color: white;
+        font-weight: 700;
+        text-align: center;
+        text-decoration: none;
+        transition: all 0.3s;
         border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        box-shadow: 0 4px 15px rgba(var(--event-accent), 0.3);
     }
-    .btn-apply:hover {
-        background: #0773c5;
-        box-shadow: 0 4px 15px rgba(9, 132, 227, 0.3);
+
+    .apply-btn:hover {
+        background: linear-gradient(135deg, #6D28D9 0%, #4F46E5 100%);
+        transform: scale(1.02);
+        color: white;
+        box-shadow: 0 8px 20px rgba(var(--event-accent), 0.4);
+    }
+
+    .res-badge {
+        width: 100%;
+        padding: 12px;
+        border-radius: 16px;
+        background: rgba(16, 185, 129, 0.1);
+        color: #10b981;
+        font-weight: 700;
+        text-align: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .closed-badge {
+        width: 100%;
+        padding: 12px;
+        border-radius: 16px;
+        background: var(--bg-secondary);
+        color: var(--text-muted);
+        font-weight: 700;
+        text-align: center;
+        border: 1px solid var(--border);
+    }
+
+    /* Empty State */
+    .no-events-card {
+        background: var(--card-bg);
+        border: 2px dashed var(--border);
+        border-radius: 30px;
+        padding: 4rem 2rem;
+        text-align: center;
+    }
+
+    @media (max-width: 768px) {
+        .event-grid { grid-template-columns: 1fr; }
+        .event-portal-header { padding: 2rem 1.5rem; }
     }
 </style>
 
-<div class="container py-4">
-    <div class="mb-5 text-center">
-        <h2 class="fw-bold mb-1" style="color: var(--text-dark);">Discover Club Events</h2>
-        <p class="text-muted pb-4">Exclusive events for {{ current_user.department }} department and more!</p>
+<div class="animate-in">
+    <!-- Stylish Page Header -->
+    <div class="event-portal-header">
+        <h2 class="fw-extrabold m-0" style="font-size: clamp(1.8rem, 5vw, 2.8rem);">Discover Events</h2>
+        <p class="opacity-75 mt-2 fw-bold" style="font-size: 1.1rem;">
+            Find incredible experiences for {{ current_user.department }} and more!
+        </p>
     </div>
 
     <div class="event-grid">
         {% for event in events %}
-        <div class="event-card">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <span class="status-badge status-{{ event.status }}">{{ event.status }}</span>
-                <span class="participation-type">
+        <div class="premium-event-card">
+            <div class="badge-wrap">
+                <span class="status-badge-lg status-{{ event.status }}">{{ event.status }}</span>
+                <div class="participation-pill">
                     {% if event.participation_type == 'solo' %}
-                    <i class="fas fa-user me-1"></i>
+                    <i class="fas fa-user"></i>
                     {% else %}
-                    <i class="fas fa-users me-1"></i>
+                    <i class="fas fa-users"></i>
                     {% endif %}
-                    {{ event.participation_type|capitalize }}
-                </span>
+                    {{ event.participation_type|title }}
+                </div>
             </div>
 
-            <h5 class="event-title">{{ event.name }}</h5>
+            <h3 class="event-name">{{ event.name }}</h3>
             <p class="event-desc">{{ event.description }}</p>
 
-            <div class="event-info mb-4">
+            <div class="event-meta-list">
                 {% if event.status == 'expired' %}
-                <div class="info-row text-muted">
-                    <i class="fas fa-calendar-times me-2"></i> Event Concluded
+                <div class="meta-item">
+                    <i class="fas fa-calendar-check"></i>
+                    <span>Event Concluded</span>
                 </div>
                 {% elif not event.is_registration_open %}
-                <div class="info-row registration-closed">
-                    <i class="fas fa-hourglass-end me-2"></i> Registration Closed
+                <div class="meta-item deadline-warning">
+                    <i class="fas fa-lock"></i>
+                    <span>Registration Closed</span>
                 </div>
                 {% elif event.registration_deadline %}
-                <div class="info-row deadline">
-                    <i class="fas fa-hourglass-half me-2"></i> Deadline: {{ event.registration_deadline.strftime('%b %d, %H:%M') }}
+                <div class="meta-item deadline-okay">
+                    <i class="fas fa-hourglass-half"></i>
+                    <span>Ends: {{ event.registration_deadline.strftime('%b %d, %I:%M %p') }}</span>
                 </div>
                 {% endif %}
 
                 {% if event.start_date %}
-                <div class="info-row">
-                    <i class="fas fa-calendar-alt info-icon-blue me-2"></i> {{ event.start_date.strftime('%B %d, %Y') }}
+                <div class="meta-item">
+                    <i class="fas fa-calendar-day"></i>
+                    <span>{{ event.start_date.strftime('%B %d, %Y') }}</span>
                 </div>
-                <div class="info-row">
-                    <i class="fas fa-clock info-icon-blue me-2"></i> {{ event.start_date.strftime('%I:%M %p') }}
+                <div class="meta-item">
+                    <i class="fas fa-clock"></i>
+                    <span>{{ event.start_date.strftime('%I:%M %p') }}</span>
                 </div>
                 {% endif %}
                 
-                <div class="info-row">
-                    <i class="fas fa-map-marker-alt info-icon-blue me-2"></i> {{ event.venue }}
+                <div class="meta-item">
+                    <i class="fas fa-map-marker-alt"></i>
+                    <span>{{ event.venue }}</span>
                 </div>
             </div>
 
-            <div class="card-action">
+            <div class="action-footer mt-auto">
                 {% if event.status == 'expired' %}
                     {% if event.id in registered_ids %}
-                    <div class="btn-status btn-registration-closed">
-                        <i class="fas fa-check-circle me-2"></i> Registered (Event Ended)
+                    <div class="res-badge">
+                        <i class="fas fa-check-double"></i> Attended
                     </div>
                     {% else %}
-                    <div class="btn-status btn-registration-closed">
-                        <i class="fas fa-calendar-times me-2"></i> Event Ended
+                    <div class="closed-badge">
+                        <i class="fas fa-calendar-times"></i> Closed
                     </div>
                     {% endif %}
                 {% elif event.id in registered_ids %}
-                <div class="btn-status btn-already-registered">
-                    <i class="fas fa-check-circle me-2"></i> Already Registered
+                <div class="res-badge">
+                    <i class="fas fa-check-circle"></i> Already Registered
                 </div>
                 {% elif not event.is_registration_open %}
-                <div class="btn-status btn-registration-closed">
-                    <i class="fas fa-lock me-2"></i> Registration Closed
+                <div class="closed-badge">
+                    <i class="fas fa-lock"></i> Locked
                 </div>
                 {% else %}
-                <a href="{{ url_for('club_portal.apply_event', event_id=event.id) }}" class="btn-status btn-apply text-decoration-none">
-                    Apply Now <i class="fas fa-arrow-right ms-2"></i>
+                <a href="{{ url_for('club_portal.apply_event', event_id=event.id) }}" class="apply-btn">
+                    Apply Now <i class="fas fa-arrow-right"></i>
                 </a>
                 {% endif %}
             </div>
         </div>
         {% else %}
-        <div class="col-12 text-center py-5">
-            <div class="bg-white p-5 rounded-4 shadow-sm">
-                <i class="fas fa-calendar-times fa-4x text-light mb-3"></i>
-                <h5 class="fw-bold">No events available right now</h5>
-                <p class="text-muted">Check back later for new club activities.</p>
+        <div class="col-12">
+            <div class="no-events-card">
+                <div class="bg-secondary bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 80px; height: 80px;">
+                    <i class="fas fa-rocket fa-2x text-primary opacity-50"></i>
+                </div>
+                <h4 class="fw-bold text-main">No Events Available</h4>
+                <p class="text-muted">Stay tuned! We're curating some amazing events for you.</p>
             </div>
         </div>
         {% endfor %}
     </div>
 </div>
 {% endblock %}
-
-

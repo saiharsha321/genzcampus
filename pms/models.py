@@ -134,6 +134,7 @@ class Event(db.Model):
     participation_type = db.Column(db.String(20), default='solo') # solo, team, both
     team_size_min = db.Column(db.Integer, default=1)
     team_size_max = db.Column(db.Integer, default=1)
+    max_registrations = db.Column(db.Integer, default=0) # 0 for unlimited
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -179,6 +180,7 @@ class Team(db.Model):
     leader_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     team_name = db.Column(db.String(100))
     team_id_code = db.Column(db.String(10), unique=True) # For others to join
+    declared_size = db.Column(db.Integer, default=1)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     leader = db.relationship('User', backref='teams_led')

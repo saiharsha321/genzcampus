@@ -28,6 +28,18 @@
                                     <div class="fw-bold h5 mb-0">{{ response.student.get_full_name() }}</div>
                                     <div class="small text-muted">{{ response.student.roll_no }}</div>
                                 </div>
+                                {% if team %}
+                                <div class="mb-4" style="background-color: var(--bs-primary-bg-subtle); padding: 12px; border-radius: 8px; border-left: 4px solid var(--bs-primary);">
+                                    <div class="text-primary small text-uppercase fw-bold mb-1"><i class="fas fa-users me-1"></i> Team Information</div>
+                                    <div class="fw-bold mb-1">{{ team.team_name }}</div>
+                                    <div class="small text-dark d-flex align-items-center">
+                                        Join Code: <span class="badge bg-primary text-white ms-2">{{ team.team_id_code }}</span>
+                                    </div>
+                                    <div class="mt-1" style="font-size: 0.75rem; color: #555;">
+                                        Share this code or your exact Team Name so others can join!
+                                    </div>
+                                </div>
+                                {% endif %}
                                 <div class="mb-4">
                                     <div class="text-muted small text-uppercase">Date & Time</div>
                                     {% if response.event.start_date %}
@@ -43,18 +55,39 @@
                                 </div>
                             </div>
                             <div class="col-5 text-center">
-                                <div class="bg-white p-2 rounded shadow-sm d-inline-block">
-                                    <img src="data:image/png;base64,{{ response.qr_code_data }}" class="img-fluid"
+                                <div class="bg-white p-2 rounded shadow-sm d-inline-block position-relative">
+                                    <img src="data:image/png;base64,{{ response.qr_code_data }}" class="img-fluid {% if ticket_status in ['PENDING', 'REJECTED'] %}qr-blurred{% endif %}"
                                         style="width: 150px; height: 150px;">
+                                    {% if ticket_status in ['PENDING', 'REJECTED'] %}
+                                    <div class="position-absolute top-50 start-50 translate-middle w-100 px-1">
+                                        <span class="badge bg-danger rounded-pill px-2 py-1 shadow-sm border border-white" style="font-size:0.65rem;">
+                                            <i class="fas fa-lock me-1"></i>{{ ticket_status }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
                                 </div>
-                                <div class="mt-2 fw-bold text-primary small">{{ response.ticket_id }}</div>
+                                <div class="mt-2 fw-bold {% if ticket_status == 'REJECTED' %}text-danger text-decoration-line-through{% else %}text-primary{% endif %} small">{{ response.ticket_id }}</div>
                             </div>
                         </div>
 
-                        <div class="alert alert-info py-2 px-3 small border-0 mb-0">
+                        {% if ticket_status == 'PENDING' %}
+                        <div class="alert alert-warning py-2 px-3 small border-0 mb-0 text-start">
+                            <i class="fas fa-exclamation-triangle me-1"></i> <strong>Incomplete Team:</strong> {{ status_msg }}
+                        </div>
+                        {% elif ticket_status == 'REJECTED' %}
+                        <div class="alert alert-danger py-2 px-3 small border-0 mb-0 text-start">
+                            <i class="fas fa-ban me-1"></i> <strong>Registration Invalid:</strong> {{ status_msg }}
+                        </div>
+                        {% elif ticket_status == 'ACCEPTED_SOLO' %}
+                        <div class="alert alert-success py-2 px-3 small border-0 mb-0 text-start">
+                            <i class="fas fa-user-check me-1"></i> {{ status_msg }}
+                        </div>
+                        {% else %}
+                        <div class="alert alert-info py-2 px-3 small border-0 mb-0 text-start">
                             <i class="fas fa-info-circle me-1"></i> Please show this QR code at the event entrance for
                             attendance marking.
                         </div>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -104,6 +137,13 @@
         .mt-4 {
             display: none !important;
         }
+    }
+    
+    .qr-blurred {
+        filter: blur(5px);
+        opacity: 0.6;
+        user-select: none;
+        pointer-events: none;
     }
 </style>
 {% endblock %}

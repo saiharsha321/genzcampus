@@ -265,8 +265,14 @@
 <div class="auth-wrap">
   <!-- Left branding panel -->
   <div class="auth-brand-panel d-none d-md-flex">
-    <div class="brand-logo">
-      <i class="fas fa-shield-alt"></i>
+    <div class="brand-logo" style="overflow: hidden; padding: 0;">
+      {% if college_logo %}
+        <img src="{{ url_for('static', filename=college_logo) }}" 
+             alt="Logo" 
+             style="width: 100%; height: 100%; object-fit: contain; padding: 10px;">
+      {% else %}
+        <i class="fas fa-shield-alt"></i>
+      {% endif %}
     </div>
     <h1 class="brand-title">GenZCampus</h1>
     <p class="brand-subtitle">Permission Management System for modern academic institutions</p>

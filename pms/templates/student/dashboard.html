@@ -219,12 +219,10 @@
         position: absolute;
         width: 63px;
         height: 63px;
-        background: var(--bg-color);
+        background: var(--card-bg);
         border-radius: 50%;
         z-index: 1;
     }
-    [data-theme="dark"] .stat-circle::after { background: #1a1b26; }
-    [data-theme="light"] .stat-circle::after { background: #ffffff; }
 
     .stat-circle span {
         position: relative;
@@ -365,28 +363,38 @@
                         <p class="text-muted small mb-0" id="timelineDateText">{{ ist_now.strftime('%A, %d %B %Y') }}</p>
                     </div>
                     <div class="position-relative">
-                        <button class="btn btn-light rounded-circle shadow-sm" style="width: 40px; height: 40px; border: 1px solid #eee;" id="timelineDatePickerBtn">
+                        <button class="btn btn-light rounded-circle shadow-sm" style="width: 40px; height: 40px; border: 1px solid var(--border-color);" id="timelineDatePickerBtn">
                             <i class="fas fa-calendar-alt text-indigo"></i>
                         </button>
                         <input type="text" id="timelineDateInput" style="position: absolute; bottom: 0; right: 0; width: 1px; height: 1px; opacity: 0; border: none; padding: 0;">
                     </div>
                 </div>
                 <div class="card-body p-4 pt-0">
-                    {% if today_timetable %}
-                    {% set periods = [
-                        {'time': today_timetable.period_1_time | format_time_range if today_timetable and today_timetable.period_1_time else '09:30 AM - 10:20 AM', 'start': today_timetable.period_1_time.split(' - ')[0] if today_timetable and today_timetable.period_1_time else '09:30', 'end': today_timetable.period_1_time.split(' - ')[1] if today_timetable and today_timetable.period_1_time else '10:20', 'sub': today_timetable.period_1 if today_timetable else None, 'num': 'P1'},
-                        {'time': today_timetable.period_2_time | format_time_range if today_timetable and today_timetable.period_2_time else '10:20 AM - 11:10 AM', 'start': today_timetable.period_2_time.split(' - ')[0] if today_timetable and today_timetable.period_2_time else '10:20', 'end': today_timetable.period_2_time.split(' - ')[1] if today_timetable and today_timetable.period_2_time else '11:10', 'sub': today_timetable.period_2 if today_timetable else None, 'num': 'P2'},
-                        {'time': today_timetable.period_3_time | format_time_range if today_timetable and today_timetable.period_3_time else '11:10 AM - 12:00 PM', 'start': today_timetable.period_3_time.split(' - ')[0] if today_timetable and today_timetable.period_3_time else '11:10', 'end': today_timetable.period_3_time.split(' - ')[1] if today_timetable and today_timetable.period_3_time else '12:00', 'sub': today_timetable.period_3 if today_timetable else None, 'num': 'P3'},
-                        {'time': '12:00 PM - 01:00 PM', 'start': '12:00', 'end': '13:00', 'sub': 'BREAK', 'num': '--'},
-                        {'time': today_timetable.period_4_time | format_time_range if today_timetable and today_timetable.period_4_time else '01:00 PM - 01:50 PM', 'start': today_timetable.period_4_time.split(' - ')[0] if today_timetable and today_timetable.period_4_time else '13:00', 'end': today_timetable.period_4_time.split(' - ')[1] if today_timetable and today_timetable.period_4_time else '13:50', 'sub': today_timetable.period_4 if today_timetable else None, 'num': 'P4'},
-                        {'time': today_timetable.period_5_time | format_time_range if today_timetable and today_timetable.period_5_time else '01:50 PM - 02:40 PM', 'start': today_timetable.period_5_time.split(' - ')[0] if today_timetable and today_timetable.period_5_time else '13:50', 'end': today_timetable.period_5_time.split(' - ')[1] if today_timetable and today_timetable.period_5_time else '14:40', 'sub': today_timetable.period_5 if today_timetable else None, 'num': 'P5'},
-                        {'time': today_timetable.period_6_time | format_time_range if today_timetable and today_timetable.period_6_time else '02:40 PM - 03:30 PM', 'start': today_timetable.period_6_time.split(' - ')[0] if today_timetable and today_timetable.period_6_time else '14:40', 'end': today_timetable.period_6_time.split(' - ')[1] if today_timetable and today_timetable.period_6_time else '15:30', 'sub': today_timetable.period_6 if today_timetable else None, 'num': 'P6'},
-                        {'time': today_timetable.period_7_time | format_time_range if today_timetable and today_timetable.period_7_time else '03:30 PM - 04:20 PM', 'start': today_timetable.period_7_time.split(' - ')[0] if today_timetable and today_timetable.period_7_time else '15:30', 'end': today_timetable.period_7_time.split(' - ')[1] if today_timetable and today_timetable.period_7_time else '16:20', 'sub': today_timetable.period_7 if today_timetable else None, 'num': 'P7'}
-                    ] %}
-                    <div class="timeline-container" id="todayTimeline">
+                    <div id="timelinePlaceholder" class="text-center py-5 bg-surface-secondary rounded-4 {% if today_timetable %}d-none{% endif %}">
+                        {% if ist_now.strftime('%A') == 'Sunday' %}
+                            <i class="fas fa-couch fa-2x text-primary mb-3"></i>
+                            <h5 class="fw-bold">Relax, it's Sunday!</h5>
+                            <p class="text-muted small mb-0">No classes are scheduled for today. Enjoy your break!</p>
+                        {% else %}
+                            <i class="fas fa-calendar-times fa-2x text-muted mb-2"></i>
+                            <p class="text-muted small mb-0" id="placeholderText">No classes scheduled for today.</p>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="timeline-container {% if not today_timetable %}d-none{% endif %}" id="todayTimeline">
+                        {% if today_timetable %}
+                        {% set periods = [
+                            {'time': today_timetable.period_1_time | format_time_range if today_timetable and today_timetable.period_1_time else '09:30 AM - 10:20 AM', 'start': today_timetable.period_1_time.split(' - ')[0] if today_timetable and today_timetable.period_1_time else '09:30', 'end': today_timetable.period_1_time.split(' - ')[1] if today_timetable and today_timetable.period_1_time else '10:20', 'sub': today_timetable.period_1 if today_timetable else None, 'num': 'P1'},
+                            {'time': today_timetable.period_2_time | format_time_range if today_timetable and today_timetable.period_2_time else '10:20 AM - 11:10 AM', 'start': today_timetable.period_2_time.split(' - ')[0] if today_timetable and today_timetable.period_2_time else '10:20', 'end': today_timetable.period_2_time.split(' - ')[1] if today_timetable and today_timetable.period_2_time else '11:10', 'sub': today_timetable.period_2 if today_timetable else None, 'num': 'P2'},
+                            {'time': today_timetable.period_3_time | format_time_range if today_timetable and today_timetable.period_3_time else '11:10 AM - 12:00 PM', 'start': today_timetable.period_3_time.split(' - ')[0] if today_timetable and today_timetable.period_3_time else '11:10', 'end': today_timetable.period_3_time.split(' - ')[1] if today_timetable and today_timetable.period_3_time else '12:00', 'sub': today_timetable.period_3 if today_timetable else None, 'num': 'P3'},
+                            {'time': '12:00 PM - 01:00 PM', 'start': '12:00', 'end': '13:00', 'sub': 'BREAK', 'num': '--'},
+                            {'time': today_timetable.period_4_time | format_time_range if today_timetable and today_timetable.period_4_time else '01:00 PM - 01:50 PM', 'start': today_timetable.period_4_time.split(' - ')[0] if today_timetable and today_timetable.period_4_time else '13:00', 'end': today_timetable.period_4_time.split(' - ')[1] if today_timetable and today_timetable.period_4_time else '13:50', 'sub': today_timetable.period_4 if today_timetable else None, 'num': 'P4'},
+                            {'time': today_timetable.period_5_time | format_time_range if today_timetable and today_timetable.period_5_time else '01:50 PM - 02:40 PM', 'start': today_timetable.period_5_time.split(' - ')[0] if today_timetable and today_timetable.period_5_time else '13:50', 'end': today_timetable.period_5_time.split(' - ')[1] if today_timetable and today_timetable.period_5_time else '14:40', 'sub': today_timetable.period_5 if today_timetable else None, 'num': 'P5'},
+                            {'time': today_timetable.period_6_time | format_time_range if today_timetable and today_timetable.period_6_time else '02:40 PM - 03:30 PM', 'start': today_timetable.period_6_time.split(' - ')[0] if today_timetable and today_timetable.period_6_time else '14:40', 'end': today_timetable.period_6_time.split(' - ')[1] if today_timetable and today_timetable.period_6_time else '15:30', 'sub': today_timetable.period_6 if today_timetable else None, 'num': 'P6'},
+                            {'time': today_timetable.period_7_time | format_time_range if today_timetable and today_timetable.period_7_time else '03:30 PM - 04:20 PM', 'start': today_timetable.period_7_time.split(' - ')[0] if today_timetable and today_timetable.period_7_time else '15:30', 'end': today_timetable.period_7_time.split(' - ')[1] if today_timetable and today_timetable.period_7_time else '16:20', 'sub': today_timetable.period_7 if today_timetable else None, 'num': 'P7'}
+                        ] %}
                         {% for p in periods %}
                             {% set ns = namespace(status_class='', status_icon='') %}
-                            
                             {% if today_attendance and p.sub %}
                                 {% for att in today_attendance %}
                                     {% if att.subject|lower|trim == p.sub|lower|trim %}
@@ -401,25 +409,14 @@
                                 {% endfor %}
                             {% endif %}
                             
-                        <div class="timeline-node {{ ns.status_class }}" data-start="{{ p.start }}" data-end="{{ p.end }}">
-                            <span class="period-time">{{ p.time }}</span>
-                            <h6 class="period-subject text-truncate">{{ p.sub or 'Free Study' }}{{ ns.status_icon|safe }}</h6>
-                            <span class="period-tag">{{ p.num }} • {% if p.sub == 'BREAK' %}Relax{% elif 'LAB' in (p.sub|upper if p.sub else '') %}Practical{% else %}Theory{% endif %}</span>
-                        </div>
+                            <div class="timeline-node {{ ns.status_class }}" data-start="{{ p.start }}" data-end="{{ p.end }}">
+                                <span class="period-time">{{ p.time }}</span>
+                                <h6 class="period-subject text-truncate">{{ p.sub or 'Free Study' }}{{ ns.status_icon|safe }}</h6>
+                                <span class="period-tag">{{ p.num }} • {% if p.sub == 'BREAK' %}Relax{% elif 'LAB' in (p.sub|upper if p.sub else '') %}Practical{% else %}Theory{% endif %}</span>
+                            </div>
                         {% endfor %}
-                    </div>
-                    {% else %}
-                    <div class="text-center py-5 bg-light rounded-4">
-                        {% if ist_now.strftime('%A') == 'Sunday' %}
-                            <i class="fas fa-couch fa-2x text-primary mb-3"></i>
-                            <h5 class="fw-bold">Relax, it's Sunday!</h5>
-                            <p class="text-muted small mb-0">No classes are scheduled for today. Enjoy your break!</p>
-                        {% else %}
-                            <i class="fas fa-calendar-times fa-2x text-muted mb-2"></i>
-                            <p class="text-muted small mb-0">No classes scheduled for today.</p>
                         {% endif %}
                     </div>
-                    {% endif %}
                 </div>
             </div>
         </div>
@@ -469,7 +466,7 @@
                         <a href="{{ url_for('club_portal.apply_event', event_id=event.id) }}" class="text-decoration-none">
                             <div class="list-item-modern d-flex justify-content-between align-items-center">
                                 <div>
-                                    <h6 class="mb-1 fw-bold text-dark text-truncate" style="max-width: 200px; font-size: 0.85rem;">{{ event.name }}</h6>
+                                    <h6 class="mb-1 fw-bold text-main text-truncate" style="max-width: 200px; font-size: 0.85rem;">{{ event.name }}</h6>
                                     <div class="d-flex align-items-center text-muted opacity-75" style="font-size: 0.7rem;">
                                         <i class="fas fa-calendar-alt me-1"></i>
                                         <span>{{ event.start_date.strftime('%B %d') if event.start_date else 'TBD' }}</span>
@@ -502,7 +499,7 @@
                         <a href="{{ url_for('student_permissions') }}" class="text-decoration-none">
                             <div class="list-item-modern d-flex justify-content-between align-items-center">
                                 <div>
-                                    <h6 class="mb-1 fw-bold text-dark text-truncate" style="max-width: 160px; font-size: 0.85rem;">{{ perm.club.name if perm.club else 'Academic OD' }}</h6>
+                                    <h6 class="mb-1 fw-bold text-main text-truncate" style="max-width: 160px; font-size: 0.85rem;">{{ perm.club.name if perm.club else 'Academic OD' }}</h6>
                                     <div class="d-flex align-items-center text-muted opacity-75" style="font-size: 0.7rem;">
                                         <i class="far fa-clock me-1"></i>
                                         <span>{{ perm.date.strftime('%d %b') }}</span>
@@ -539,7 +536,7 @@
                         {% for reg in registrations[:3] %}
                         <div class="list-item-modern d-flex justify-content-between align-items-center">
                             <div>
-                                <h6 class="mb-1 fw-bold text-dark text-truncate" style="max-width: 160px; font-size: 0.85rem;">{{ reg.event.name }}</h6>
+                                <h6 class="mb-1 fw-bold text-main text-truncate" style="max-width: 160px; font-size: 0.85rem;">{{ reg.event.name }}</h6>
                                 <div class="d-flex align-items-center text-muted opacity-75" style="font-size: 0.7rem;">
                                     <i class="fas fa-hashtag me-1"></i>
                                     <span>{{ reg.ticket_id }}</span>
@@ -570,7 +567,7 @@
         const dayPills = $('.day-pill');
         
         // 1. Live Timeline Tracking (Desktop)
-        function updateLiveTimeline() {
+        function updateLiveTimeline(isHistorical = false) {
             const nowTime = new Date();
             const currentTimeStr = nowTime.getHours().toString().padStart(2, '0') + ':' + nowTime.getMinutes().toString().padStart(2, '0');
             
@@ -581,25 +578,30 @@
                 const end = $(this).data('end');
                 const sub = $(this).find('.period-subject').text().trim();
                 
-                if (currentTimeStr >= start && currentTimeStr < end) {
+                // Only show LIVE badge if it's the current real-time and it's TODAY's view
+                if (!isHistorical && currentTimeStr >= start && currentTimeStr < end) {
                     $(this).addClass('active');
                     const container = $('#todayTimeline');
-                    const scrollLeft = $(this).position().left - container.width()/2 + $(this).width()/2 + container.scrollLeft();
-                    container.animate({ scrollLeft: scrollLeft }, 1000);
+                    if (container.length) {
+                        const scrollLeft = $(this).position().left - container.width()/2 + $(this).width()/2 + container.scrollLeft();
+                        container.animate({ scrollLeft: scrollLeft }, 1000);
+                    }
                     nextClass = "Ongoing: " + sub;
                 } else {
                     $(this).removeClass('active');
-                    if (start > currentTimeStr && nextClass === "No more classes today") {
+                    if (!isHistorical && start > currentTimeStr && nextClass === "No more classes today") {
                         nextClass = "Next: " + sub;
                     }
                 }
             });
             
-            $('#mobileNextClass').text(nextClass);
+            if (!isHistorical) {
+                $('#mobileNextClass').text(nextClass);
+            }
         }
         
         updateLiveTimeline();
-        setInterval(updateLiveTimeline, 60000);
+        setInterval(() => updateLiveTimeline($('#timelineTitle').text().includes('Historical')), 60000);
 
         // 2. Mobile Overlay Logic
         $('#mobileScheduleBtn').click(function() {
@@ -637,7 +639,8 @@
             try {
                 const resp = await $.ajax({
                     url: '/api/student/timeline/history',
-                    data: { date: dateStr }
+                    data: { date: dateStr },
+                    dataType: 'json'
                 });
 
                 if (resp.is_holiday) {
@@ -684,7 +687,7 @@
                                 <div class="px-4 pb-4 pt-1">
                                     <hr class="mt-0 mb-3 opacity-5">
                                     <div class="d-flex align-items-center mb-2">
-                                        <div class="bg-light rounded p-2 me-3"><i class="fas fa-info-circle text-primary"></i></div>
+                                        <div class="bg-surface-secondary rounded p-2 me-3"><i class="fas fa-info-circle text-primary"></i></div>
                                         <div>
                                             <div class="small fw-bold">Period Type</div>
                                             <div class="extra-small text-muted">${isBreak ? 'Lunch/Break' : (p.subject && p.subject.toUpperCase().includes('LAB') ? 'Laboratory/Practical' : 'Lecture/Theory')}</div>
@@ -692,7 +695,7 @@
                                     </div>
                                     ${p.status ? `
                                     <div class="d-flex align-items-center">
-                                        <div class="bg-light rounded p-2 me-3"><i class="fas fa-fingerprint text-info"></i></div>
+                                        <div class="bg-surface-secondary rounded p-2 me-3"><i class="fas fa-fingerprint text-info"></i></div>
                                         <div>
                                             <div class="small fw-bold">Attendance Status</div>
                                             <div class="extra-small text-muted text-capitalize">${p.status}</div>
@@ -707,29 +710,42 @@
                 overlayBody.html(html);
 
             } catch(e) {
-                overlayBody.html('<div class="text-center py-5 text-danger">Error loading schedule</div>');
+                console.error("Schedule Load Error:", e);
+                overlayBody.html('<div class="text-center py-5 text-danger"><i class="fas fa-exclamation-triangle mb-2"></i> Error loading schedule</div>');
             }
         }
 
         // 3. Desktop Flatpickr logic (Keep for desktop view)
         const fp = flatpickr("#timelineDateInput", {
+            dateFormat: "Y-m-d",
             onChange: function(selectedDates, dateStr) {
                 if(selectedDates.length > 0) {
-                    $('#timelineTitle').text("Historical Timeline");
-                    $('#timelineDateText').text("Loading...");
+                    const timelineTitle = $('#timelineTitle');
+                    const dateText = $('#timelineDateText');
+                    const placeholder = $('#timelinePlaceholder');
+                    const container = $('#todayTimeline');
+
+                    timelineTitle.text("Historical Timeline");
+                    dateText.text("Loading...");
+                    placeholder.addClass('d-none');
+                    container.empty().removeClass('d-none').html('<div class="col-12 text-center py-5"><div class="spinner-border text-primary spinner-border-sm"></div></div>');
+
                     $.ajax({
                         url: '/api/student/timeline/history',
                         data: { date: dateStr },
+                        dataType: 'json',
                         success: function(resp) {
-                            $('#timelineDateText').text(resp.date);
-                            const container = $('#todayTimeline');
+                            dateText.text(resp.date);
                             container.empty();
+                            
                             if (resp.is_holiday) {
-                                container.html(`<div class="col-12 text-center py-5 bg-danger bg-opacity-10 border border-danger-subtle rounded-4 w-100 mx-1">
+                                container.addClass('d-none');
+                                placeholder.removeClass('d-none').html(`<div class="text-center py-4 w-100">
                                     <i class="fas fa-calendar-check fa-2x text-danger mb-3"></i>
                                     <h5 class="fw-bold">Holiday: ${resp.holiday_reason}</h5>
                                 </div>`);
                             } else if (resp.has_classes) {
+                                container.removeClass('d-none');
                                 resp.timeline.forEach(function(p) {
                                     let statusClass = p.status === 'present' ? 'bg-success-subtle border-success' : (p.status === 'absent' ? 'bg-danger-subtle border-danger' : '');
                                     let statusIcon = p.status === 'present' ? '<i class="fas fa-check-circle text-success ms-2"></i>' : (p.status === 'absent' ? '<i class="fas fa-times-circle text-danger ms-2"></i>' : '');
@@ -741,10 +757,19 @@
                                         </div>
                                     `);
                                 });
-                                updateLiveTimeline();
+                                
+                                // Check if the selected date is today to decide whether to show LIVE indicators
+                                const selectedDate = new Date(dateStr).setHours(0,0,0,0);
+                                const todayDate = new Date().setHours(0,0,0,0);
+                                updateLiveTimeline(selectedDate !== todayDate);
                             } else {
-                                container.html(`<div class="col-12 text-center py-5 bg-light border rounded-4 w-100 mx-1"><p class="text-muted mb-0">No classes scheduled.</p></div>`);
+                                container.addClass('d-none');
+                                placeholder.removeClass('d-none').html('<div class="py-5 w-100"><p class="text-muted mb-0">No classes scheduled.</p></div>');
                             }
+                        },
+                        error: function() {
+                            dateText.text("Error loading");
+                            container.html('<div class="col-12 text-center py-5 text-danger"><i class="fas fa-exclamation-triangle mb-2"></i> Failed to load schedule</div>');
                         }
                     });
                 }

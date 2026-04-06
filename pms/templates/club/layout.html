@@ -30,6 +30,7 @@
     .club-main {
       margin-left: var(--sidebar-w);
       min-height: 100vh;
+      overflow-x: hidden;
     }
 
     .club-topbar {
@@ -49,6 +50,7 @@
     .club-content {
       padding: 24px;
       padding-bottom: calc(var(--bottom-nav-h) + 24px);
+      overflow-x: hidden;
     }
 
     /* Mobile bottom nav */
@@ -137,11 +139,6 @@
         <span>Create Event</span>
       </a>
 
-      <a class="sidebar-link {% if request.endpoint == 'club_portal.scanner' %}active{% endif %}"
-         href="{{ url_for('club_portal.scanner') }}">
-        <i class="fas fa-qrcode"></i>
-        <span>Scanner</span>
-      </a>
       {% endif %}
 
       {% if session.get('role') in ['President', 'Treasurer'] %}
@@ -239,11 +236,6 @@
       <i class="fas fa-calendar-plus"></i>
       <span>Event</span>
     </a>
-    <a class="bottom-nav-item {% if request.endpoint == 'club_portal.scanner' %}active{% endif %}"
-       href="{{ url_for('club_portal.scanner') }}">
-      <i class="fas fa-qrcode"></i>
-      <span>Scan</span>
-    </a>
     {% endif %}
     {% if session.get('role') in ['President', 'Treasurer'] %}
     <a class="bottom-nav-item {% if request.endpoint == 'club_portal.finances' %}active{% endif %}"
@@ -261,7 +253,7 @@
 </nav>
 
 {% else %}
-  {% block auth_content %}{% endblock %}
+  {{ self.content() }}
 {% endif %}
 
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
@@ -295,5 +287,3 @@
 {% block scripts %}{% endblock %}
 </body>
 </html>
-
-

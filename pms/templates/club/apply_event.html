@@ -85,26 +85,40 @@
                     </div>
 
                     <div id="create_team_group">
-                        <label class="form-label">Team Name <span class="text-danger">*</span></label>
-                        <input type="text" name="team_name" class="form-control" placeholder="Enter your team name">
-                        <small class="text-muted">A unique team code will be generated for you after
-                            registration.</small>
+                        <div class="mb-3">
+                            <label class="form-label">Team Name <span class="text-danger">*</span></label>
+                            <input type="text" name="team_name" class="form-control" placeholder="Enter your team name (case-insensitive)">
+                            <small class="text-muted">Members can join using this exact name or the code generated after registration.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Total Team Size <span class="text-danger">*</span></label>
+                            <input type="number" name="declared_size" id="declared_size" class="form-control" 
+                                min="{{ event.team_size_min }}" max="{{ event.team_size_max }}" 
+                                value="{{ event.team_size_min }}" oninput="renderTeamMemberFields()">
+                            <small class="text-muted">Including yourself. Min: {{ event.team_size_min }}, Max: {{ event.team_size_max }}</small>
+                        </div>
+                        <div id="team_members_container" class="mt-3">
+                            <!-- Dynamic fields added via JS -->
+                        </div>
                     </div>
 
                     <div id="join_team_group" style="display: none;">
-                        <label class="form-label">Team Code <span class="text-danger">*</span></label>
-                        <input type="text" name="team_code" class="form-control" placeholder="e.g. ABC123">
-                        <small class="text-muted">Get this code from your team leader.</small>
+                        <label class="form-label">Team Code or Exact Team Name <span class="text-danger">*</span></label>
+                        <input type="text" name="team_code" class="form-control" placeholder="e.g. ABC123 or MyTeamName">
+                        <small class="text-muted">Get this code or the exact case-sensitive name from your team leader.</small>
                     </div>
                 </div>
                 {% endif %}
 
                 <!-- Dynamic Custom Form Fields -->
                 {% if schema %}
-                <div class="mb-4">
+                <div class="mb-4" id="event_custom_form">
                     <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-list-ul me-1"></i> Event
                         Specific Info</h6>
                     {% for field in schema %}
+                    {% set is_team_name = (field.label|lower == 'team name' or field.label|lower == 'teamname' or field.label|lower == 'name of team' or field.label|lower == 'name of the team') %}
+                    {% set render_field = not (is_team_name and event.participation_type in ['team', 'both']) %}
+                    {% if render_field %}
                     <div class="mb-3">
                         <label class="form-label">{{ field.label }} {% if field.required %}<span
                                 class="text-danger">*</span>{% endif %}</label>
@@ -134,6 +148,7 @@
                         </div>
                         {% endif %}
                     </div>
+                    {% endif %}
                     {% endfor %}
                 </div>
                 {% endif %}
@@ -167,27 +182,76 @@
     function toggleTeamFields(show) {
         const teamFields = document.getElementById('team_fields');
         if (show) {
+            document.getElementById('team').checked = true;
             teamFields.style.display = 'block';
             document.getElementById('team_action').setAttribute('required', 'required');
         } else {
+            document.getElementById('solo').checked = true;
             teamFields.style.display = 'none';
             document.getElementById('team_action').removeAttribute('required');
         }
+        if (typeof renderTeamMemberFields === 'function') {
+            renderTeamMemberFields();
+        }
+    }
+
+    function renderTeamMemberFields() {
+        const sizeInput = document.getElementById('declared_size');
+        const container = document.getElementById('team_members_container');
+        if (!sizeInput || !container) return;
+        
+        let size = parseInt(sizeInput.value) || {{ event.team_size_min }};
+        let extraMembers = size - 1;
+        let maxAllowed = {{ event.team_size_max }} - 1;
+        
+        if (extraMembers > maxAllowed) extraMembers = maxAllowed;
+        if (extraMembers < 0) extraMembers = 0;
+        
+        let html = '';
+        if (extraMembers > 0) {
+            html += '<h6 class="fw-bold mt-4 mb-2 small text-uppercase text-muted"><i class="fas fa-user-plus me-1"></i> Register Teammates (Optional)</h6>';
+            html += '<p class="small text-muted mb-3">You can enter their roll numbers right now, or leave blank and let them join later with the Team Code/Name.</p>';
+            
+            for (let i = 1; i <= extraMembers; i++) {
+                html += `
+                <div class="mb-2">
+                    <label class="form-label small">Teammate ${i} Roll Number</label>
+                    <input type="text" name="member_roll_no_${i}" class="form-control form-control-sm" placeholder="e.g. 21X41A0501" style="text-transform: uppercase;" pattern="(?=.*[A-Za-z])(?=.*\\d)[A-Za-z0-9]{5,20}">
+                </div>
+                `;
+            }
+        }
+        container.innerHTML = html;
     }
 
     function toggleTeamAction() {
         const action = document.getElementById('team_action').value;
         const createGroup = document.getElementById('create_team_group');
         const joinGroup = document.getElementById('join_team_group');
+        const customForm = document.getElementById('event_custom_form');
 
         if (action === 'create') {
             createGroup.style.display = 'block';
             joinGroup.style.display = 'none';
+            if (customForm) customForm.style.display = 'block';
+            
+            // Enable inputs
+            createGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = false);
+            if (customForm) customForm.querySelectorAll('input, select, textarea').forEach(el => el.disabled = false);
+            joinGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = true);
+            
             createGroup.querySelector('input').setAttribute('required', 'required');
             joinGroup.querySelector('input').removeAttribute('required');
         } else {
             createGroup.style.display = 'none';
             joinGroup.style.display = 'block';
+            if (customForm) customForm.style.display = 'none';
+            
+            // Disable inputs
+            createGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = true);
+            if (customForm) customForm.querySelectorAll('input, select, textarea').forEach(el => el.disabled = true);
+            joinGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = false);
+            
             createGroup.querySelector('input').removeAttribute('required');
             joinGroup.querySelector('input').setAttribute('required', 'required');
         }
@@ -200,6 +264,9 @@
             toggleTeamFields(true);
         }
         toggleTeamAction();
+        if (typeof renderTeamMemberFields === 'function') {
+            renderTeamMemberFields();
+        }
     };
 </script>
 

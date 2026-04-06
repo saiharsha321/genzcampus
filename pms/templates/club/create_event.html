@@ -35,18 +35,36 @@
                     </div>
                 </div>
 
-                <div class="mb-3">
-                    <label class="form-label">Venue</label>
-                    <input type="text" name="venue" class="form-control" placeholder="e.g. Auditorium" required>
+                <div class="row">
+                    <div class="col-md-8 mb-3">
+                        <label class="form-label">Venue</label>
+                        <input type="text" name="venue" class="form-control" placeholder="e.g. Auditorium" required>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Max Registrations</label>
+                        <input type="number" name="max_registrations" class="form-control" value="0" min="0">
+                        <small class="text-muted">(0 for unlimited)</small>
+                    </div>
+                </div>
+
+                <div class="row" id="team_size_config" style="display: none;">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Min Team Size</label>
+                        <input type="number" name="team_size_min" class="form-control" value="1" min="1">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Max Team Size</label>
+                        <input type="number" name="team_size_max" class="form-control" value="4" min="1">
+                    </div>
                 </div>
 
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <label class="form-label">Participation Type</label>
-                        <select name="participation_type" class="form-select">
+                        <select name="participation_type" id="participation_type" class="form-select" onchange="toggleTeamSizeConfig()">
                             <option value="solo">Solo Only</option>
                             <option value="team">Team Only</option>
-                            <option value="both">Solo & Team</option>
+                            <option value="both" selected>Solo & Team</option>
                         </select>
                     </div>
                     <div class="col-md-6 mb-3">
@@ -74,6 +92,35 @@
         </div>
     </div>
 </div>
+<script>
+    function toggleTeamSizeConfig() {
+        const ptype = document.getElementById('participation_type').value;
+        const config = document.getElementById('team_size_config');
+        if (ptype === 'team' || ptype === 'both') {
+            config.style.display = 'flex';
+        } else {
+            config.style.display = 'none';
+        }
+    }
+    window.addEventListener('load', function() {
+        toggleTeamSizeConfig();
+        
+        // Set default times (09:00 start, 16:00 end)
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${year}-${month}-${day}`;
+        
+        const startInput = document.querySelector('input[name="start_date"]');
+        const endInput = document.querySelector('input[name="end_date"]');
+        const deadlineInput = document.querySelector('input[name="registration_deadline"]');
+        
+        if (!startInput.value) startInput.value = `${todayStr}T09:00`;
+        if (!endInput.value) endInput.value = `${todayStr}T16:00`;
+        if (!deadlineInput.value) deadlineInput.value = `${todayStr}T08:30`;
+    });
+</script>
 {% endblock %}
 
 

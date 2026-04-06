@@ -1,4 +1,5 @@
-from flask import render_template, redirect, url_for, flash, request, jsonify, current_app, session, send_file
+
+from flask import render_template, redirect, url_for, flash, request, session, jsonify, send_file
 from flask_login import login_user, logout_user, login_required, current_user
 from club_portal import club_portal as bp
 from models import db, Club, ClubMember, Event, EventForm, EventResponse, Team, TeamMember, Attendance, FinanceTransaction, User
@@ -26,6 +27,38 @@ def inject_club():
         club = Club.query.get(session['club_id'])
         return dict(club=club)
     return dict()
+
+def filter_accepted_responses(event, responses, now):
+    """
+    Filters out participants who are 'Rejected' (Team-only event, past deadline, size < min).
+    """
+    if event.participation_type != 'team':
+        return responses # Solo/Both allow fallback to individual
+        
+    deadline = event.registration_deadline or event.start_date or datetime.combine(event.date, datetime.min.time())
+    if now <= deadline:
+        return responses # Only filter AFTER the deadline
+        
+    # Get all teams for this event
+    teams = {t.id: t for t in Team.query.filter_by(event_id=event.id).all()}
+    
+    accepted = []
+    team_member_counts = {}
+    
+    # Pre-count members for efficiency
+    for t_id in teams.keys():
+        team_member_counts[t_id] = TeamMember.query.filter_by(team_id=t_id).count()
+        
+    for r in responses:
+        if not r.team_id:
+            # Should not happen in 'team-only' but if it does, it's rejected as solo
+            continue
+            
+        count = team_member_counts.get(r.team_id, 0)
+        if count >= event.team_size_min:
+            accepted.append(r)
+            
+    return accepted
 
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
@@ -67,6 +100,10 @@ def dashboard():
             event.status = 'active'
         else:
             event.status = 'upcoming'
+            
+        # Filter accepted responses for counts
+        event.accepted_responses = filter_accepted_responses(event, event.responses, now)
+        
     db.session.commit()
 
     return render_template('club/dashboard.html', club=club, events=events, now=now)
@@ -89,10 +126,19 @@ def create_event():
         end_date = datetime.strptime(request.form.get('end_date'), '%Y-%m-%dT%H:%M')
         venue = request.form.get('venue')
         participation_type = request.form.get('participation_type') # solo, team, both
+        team_size_min = int(request.form.get('team_size_min', 1))
+        team_size_max = int(request.form.get('team_size_max', 1))
+        max_registrations = int(request.form.get('max_registrations', 0))
         allowed_depts = request.form.getlist('departments') # Multi-select
         registration_deadline_str = request.form.get('registration_deadline')
         registration_deadline = datetime.strptime(registration_deadline_str, '%Y-%m-%dT%H:%M') if registration_deadline_str else None
         
+        # Validation: Deadline must be on or before start_date
+        event_start_cmp = start_date or datetime.combine(start_date.date(), datetime.min.time())
+        if registration_deadline and registration_deadline > event_start_cmp:
+            flash('Registration deadline cannot be after the event start date.', 'danger')
+            return redirect(url_for('club_portal.create_event'))
+
         event = Event(
             club_id=club_id,
             name=name,
@@ -103,6 +149,9 @@ def create_event():
             registration_deadline=registration_deadline,
             venue=venue,
             participation_type=participation_type,
+            team_size_min=team_size_min,
+            team_size_max=team_size_max,
+            max_registrations=max_registrations,
             allowed_departments=json.dumps(allowed_depts),
             status='upcoming'
         )
@@ -139,23 +188,44 @@ def build_form(event_id):
 @bp.route('/events/<int:event_id>/update-deadline', methods=['POST'])
 def update_deadline(event_id):
     club_id = session.get('club_id')
-    if not club_id: return redirect(url_for('club_portal.login'))
-    
+    if not club_id:
+        return redirect(url_for('club_portal.login'))
+
     event = Event.query.get_or_404(event_id)
     if event.club_id != club_id:
         flash('Unauthorized action.', 'danger')
         return redirect(url_for('club_portal.dashboard'))
-    
+
     new_deadline_str = request.form.get('registration_deadline')
     if new_deadline_str:
         try:
             new_deadline = datetime.strptime(new_deadline_str, '%Y-%m-%dT%H:%M')
+            
+            # Validation: Deadline must be on or before start_date
+            event_start_cmp = event.start_date or (datetime.combine(event.date, datetime.min.time()) if event.date else None)
+            if event_start_cmp and new_deadline > event_start_cmp:
+                msg = 'Registration deadline cannot be after the event start date.'
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return jsonify({'success': False, 'message': msg}), 400
+                flash(msg, 'danger')
+                return redirect(url_for('club_portal.dashboard'))
+
             event.registration_deadline = new_deadline
             db.session.commit()
+            # AJAX response
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                formatted = new_deadline.strftime('%d %b, %H:%M')
+                return jsonify({
+                    'success': True,
+                    'deadline': formatted,
+                    'message': f'Registration deadline for "{event.name}" updated successfully!'
+                })
             flash(f'Registration deadline for "{event.name}" updated successfully!', 'success')
         except ValueError:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({'success': False, 'message': 'Invalid date format.'}), 400
             flash('Invalid date format.', 'danger')
-    
+    # Non-AJAX fallback
     return redirect(url_for('club_portal.dashboard'))
 
 @bp.route('/events/<int:event_id>/delete')
@@ -214,6 +284,16 @@ def student_events():
 @bp.route('/events/<int:event_id>/apply', methods=['GET', 'POST'])
 @login_required
 def apply_event(event_id):
+    def get_dept_code(dept_name):
+        if not dept_name: return "GEN"
+        d = str(dept_name).strip().upper()
+        if 'AIML' in d: return 'CSM'
+        if 'CSE-CS' in d or 'CS' in d: return 'CS'
+        if 'CSE-DS' in d or 'DS' in d: return 'DS'
+        if 'CSE' in d: return 'CSE'
+        if 'CIVIL' in d: return 'CIV'
+        return d[:3] # Fallback to first 3 chars
+
     event = Event.query.get_or_404(event_id)
     form_obj = EventForm.query.filter_by(event_id=event_id).first()
     
@@ -233,87 +313,244 @@ def apply_event(event_id):
         flash('You have already registered for this event.', 'warning')
         return redirect(url_for('club_portal.registration_ticket', response_id=existing.id))
 
+    # Initial check (handled inside POST for teams with extra members)
+    if not request.method == 'POST' and event.max_registrations > 0:
+        current_reg_count = EventResponse.query.filter_by(event_id=event_id).count()
+        if current_reg_count >= event.max_registrations:
+            flash(f'Registration limit of {event.max_registrations} has been reached for this event.', 'danger')
+            return redirect(url_for('club_portal.student_events'))
+
     if request.method == 'POST':
-        # participation_type handling
+        # Logging for debugging
+        debug_info = f"{datetime.now()}: POST Submit. Event {event_id}, User {current_user.id}, Form: {dict(request.form)}\n"
+        with open('instance/registration_debug.log', 'a') as f:
+            import os
+            if not os.path.exists('instance'): os.makedirs('instance')
+            f.write(debug_info)
+
         team_id = None
-        if event.participation_type in ['team', 'both']:
-            ptype = request.form.get('participation_choice')
-            if ptype == 'team':
-                team_action = request.form.get('team_action') # create or join
-                if team_action == 'create':
-                    t_name = request.form.get('team_name')
-                    if not t_name:
-                        flash('Team name is required to create a team.', 'danger')
-                        return redirect(request.url)
-                    
-                    import random, string
-                    t_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-                    
-                    new_team = Team(event_id=event_id, leader_id=current_user.id, team_name=t_name, team_id_code=t_code)
-                    db.session.add(new_team)
-                    db.session.flush()
-                    team_id = new_team.id
-                    
-                    # Add leader as member
-                    leader_mem = TeamMember(team_id=team_id, user_id=current_user.id, role='leader')
-                    db.session.add(leader_mem)
+        extra_members_found = []
+        # Get from form
+        ptype = request.form.get('participation_choice', 'solo')
+        
+        # Calculate slots needed for limit check
+        reg_slots_needed = 1
+        if ptype == 'team' and request.form.get('team_action') == 'create':
+            try:
+                dec_size = int(request.form.get('declared_size', 1))
+                extra_cnt = 0
+                for i in range(1, dec_size):
+                    if request.form.get(f'member_roll_no_{i}'):
+                        extra_cnt += 1
+                reg_slots_needed = 1 + extra_cnt
+            except: pass
+
+        if event.max_registrations > 0:
+            current_reg_count = EventResponse.query.filter_by(event_id=event_id).count()
+            if (current_reg_count + reg_slots_needed) > event.max_registrations:
+                flash(f'Limit reached. Only {event.max_registrations - current_reg_count} slots left, but you need {reg_slots_needed}.', 'danger')
+                return redirect(request.url)
+
+        if event.participation_type in ['team', 'both'] and ptype == 'team':
+            team_action = request.form.get('team_action') # create or join
+            if team_action == 'create':
+                t_name = request.form.get('team_name')
+                declared_size_str = request.form.get('declared_size')
                 
-                elif team_action == 'join':
-                    t_code = request.form.get('team_code')
-                    target_team = Team.query.filter_by(event_id=event_id, team_id_code=t_code).first()
-                    if not target_team:
-                        flash('Invalid Team Code for this event.', 'danger')
-                        return redirect(request.url)
+                if not t_name:
+                    flash('Team name is required to create a team.', 'danger')
+                    return redirect(request.url)
+                
+                existing_t = Team.query.filter(Team.event_id==event_id, Team.team_name.ilike(t_name)).first()
+                if existing_t:
+                    flash('This Team Name is already taken for this event.', 'danger')
+                    return redirect(request.url)
                     
-                    # Check if team is full
-                    if len(target_team.members) >= event.team_size_max:
-                        flash('This team is already full.', 'danger')
-                        return redirect(request.url)
+                try:
+                    declared_size = int(declared_size_str)
+                except (ValueError, TypeError):
+                    declared_size = event.team_size_min
+                
+                if declared_size < event.team_size_min or declared_size > event.team_size_max:
+                    flash(f'Team size must be between {event.team_size_min} and {event.team_size_max}', 'danger')
+                    return redirect(request.url)
+                
+                import random, string
+                rand_num = ''.join(random.choices(string.digits, k=4))
+                t_code = (t_name[:4].upper() + rand_num)[:10]
+                
+                new_team = Team(event_id=event_id, leader_id=current_user.id, team_name=t_name, team_id_code=t_code, declared_size=declared_size)
+                db.session.add(new_team)
+                db.session.flush()
+                team_id = new_team.id
+                
+                leader_mem = TeamMember(team_id=team_id, user_id=current_user.id, role='leader')
+                db.session.add(leader_mem)
+                
+                for i in range(1, declared_size):
+                    roll_no = request.form.get(f'member_roll_no_{i}')
+                    if roll_no:
+                        roll_no = roll_no.strip().upper()
+                        user_mem = User.query.filter_by(roll_no=roll_no).first()
+                        if not user_mem:
+                            flash(f'Student with Roll Number {roll_no} not found. They must sign up first.', 'danger')
+                            db.session.rollback()
+                            return redirect(request.url)
+                        
+                        existing_mem = EventResponse.query.filter_by(event_id=event_id, student_id=user_mem.id).first()
+                        if existing_mem:
+                            flash(f'Student {roll_no} is already registered for this event.', 'danger')
+                            db.session.rollback()
+                            return redirect(request.url)
+                            
+                        new_mem = TeamMember(team_id=team_id, user_id=user_mem.id, role='member')
+                        db.session.add(new_mem)
+                        extra_members_found.append(user_mem)
+
+            elif team_action == 'join':
+                t_code_or_name = request.form.get('team_code', '').strip()
+                if not t_code_or_name:
+                    flash('Team Code or Name is required.', 'danger')
+                    return redirect(request.url)
                     
-                    team_id = target_team.id
-                    # Add as member
+                # Robust case-insensitive lookup
+                from sqlalchemy import or_, func
+                target_team = Team.query.filter(
+                    Team.event_id == event_id,
+                    or_(
+                        func.lower(Team.team_id_code) == t_code_or_name.lower(),
+                        func.lower(Team.team_name) == t_code_or_name.lower()
+                    )
+                ).first()
+                    
+                if not target_team:
+                    # Check if the team exists in ANY event to provide a better error
+                    other_event_team = Team.query.filter(
+                        or_(
+                            func.lower(Team.team_id_code) == t_code_or_name.lower(),
+                            func.lower(Team.team_name) == t_code_or_name.lower()
+                        )
+                    ).first()
+                    
+                    if other_event_team:
+                        flash(f'The team "{t_code_or_name}" exists but is registered for a different event: "{other_event_team.event.name}".', 'warning')
+                    else:
+                        # Log failed attempt for debugging
+                        with open('instance/join_debug.log', 'a') as f:
+                            import os
+                            if not os.path.exists('instance'): os.makedirs('instance')
+                            f.write(f"{datetime.now()}: Join Failed. Event {event_id}, User {current_user.id}, Attempt: '{t_code_or_name}'\n")
+                        flash(f'Team "{t_code_or_name}" not found. Please verify the Code or Name and ensure it belongs to this event.', 'danger')
+                    return redirect(request.url)
+                
+                # Check current member count
+                memo_count = TeamMember.query.filter_by(team_id=target_team.id).count()
+                if memo_count >= target_team.declared_size:
+                    flash(f'Team "{target_team.team_name}" is already full ({target_team.declared_size} members).', 'danger')
+                    return redirect(request.url)
+                
+                team_id = target_team.id
+                # Check if already a member through other means
+                existing_member = TeamMember.query.filter_by(team_id=team_id, user_id=current_user.id).first()
+                if not existing_member:
                     new_mem = TeamMember(team_id=team_id, user_id=current_user.id, role='member')
                     db.session.add(new_mem)
+                db.session.flush()
 
         # Collect custom form data
-        schema = json.loads(form_obj.schema_json)
         responses = {}
-        for field in schema:
-            val = request.form.get(f"field_{field['label']}")
-            if field.get('required') and not val:
-                flash(f"{field['label']} is required", 'danger')
-                return redirect(request.url)
-            responses[field['label']] = val
+        target_team = None
+        if team_id:
+            target_team = Team.query.get(team_id)
 
-        # Generate unique ticket ID
-        import uuid
-        ticket_id = f"GRD-TKT-{uuid.uuid4().hex[:8].upper()}"
+        skip_form = (ptype == 'team' and request.form.get('team_action') == 'join')
         
-        # QR Code Generation
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data(ticket_id)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        buffered = io.BytesIO()
-        img.save(buffered, format="PNG")
-        qr_base64 = base64.b64encode(buffered.getvalue()).decode()
+        if skip_form and target_team:
+            # Inherit Lead's responses
+            lead_resp = EventResponse.query.filter_by(event_id=event_id, student_id=target_team.leader_id).first()
+            if lead_resp:
+                responses = json.loads(lead_resp.response_json)
+        else:
+            schema = json.loads(form_obj.schema_json) if form_obj and form_obj.schema_json else []
+            for field in schema:
+                f_lower = field['label'].lower()
+                if f_lower in ['team name', 'teamname', 'name of team', 'name of the team'] and event.participation_type in ['team', 'both'] and ptype == 'team':
+                    responses[field['label']] = target_team.team_name if (request.form.get('team_action') == 'join') else t_name
+                else:
+                    val = request.form.get(f"field_{field['label']}")
+                    if field.get('required') and not val:
+                        flash(f"{field['label']} is required", 'danger')
+                        return redirect(request.url)
+                    responses[field['label']] = val
 
-        response = EventResponse(
-            event_id=event_id,
-            student_id=current_user.id,
-            response_json=json.dumps(responses),
-            ticket_id=ticket_id,
-            qr_code_data=qr_base64
-        )
-        db.session.add(response)
+        # Helper to generate tickets
+        def create_ticket_record(stu_id, t_id):
+            import qrcode, io, base64
+            student = User.query.get(stu_id)
+            
+            # Ticket ID generation logic - Use Team Lead's details if in a team
+            id_source_student = student
+            if t_id:
+                t_obj = Team.query.get(t_id)
+                if t_obj:
+                    lead_stu = User.query.get(t_obj.leader_id)
+                    if lead_stu:
+                        id_source_student = lead_stu
+
+            prefix = id_source_student.roll_no[:2] if id_source_student.roll_no and len(id_source_student.roll_no) >= 2 else "00"
+            dept_code = get_dept_code(id_source_student.department)
+            
+            # Ensure ticket_id is globally unique
+            serial = EventResponse.query.filter_by(event_id=event_id).count() + 1
+            while True:
+                candidate_id = f"{prefix}{dept_code}{str(serial).zfill(4)}"
+                if not EventResponse.query.filter_by(ticket_id=candidate_id).first():
+                    ticket_id = candidate_id
+                    break
+                serial += 1
+            
+            # QR Data: Basic details + Team list
+            qr_text = f"Ticket ID: {ticket_id}\nName: {student.get_full_name()}\nRoll No: {student.roll_no}\nEvent: {event.name}\nDate: {event.start_date.strftime('%d %b %Y') if event.start_date else 'TBA'}"
+            
+            if t_id:
+                from models import TeamMember
+                all_mems = TeamMember.query.filter_by(team_id=t_id).all()
+                mem_list = "\nTeam Members:\n" + "\n".join([f"- {m.user.get_full_name()} ({m.user.roll_no})" for m in all_mems])
+                qr_text += mem_list
+
+            qr = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr.add_data(qr_text)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            qr_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+            r = EventResponse(
+                event_id=event_id,
+                student_id=stu_id,
+                team_id=t_id,
+                response_json=json.dumps(responses),
+                ticket_id=ticket_id,
+                qr_code_data=qr_base64
+            )
+            db.session.add(r)
+            db.session.flush() # To get ID for leader_response
+            return r
+
+        leader_response = create_ticket_record(current_user.id, team_id)
+        
+        for ex_mem in extra_members_found:
+            create_ticket_record(ex_mem.id, team_id)
+
         db.session.commit()
         
         flash('Registration successful!', 'success')
-        return redirect(url_for('club_portal.registration_ticket', response_id=response.id))
+        return redirect(url_for('club_portal.registration_ticket', response_id=leader_response.id))
 
-    schema = json.loads(form_obj.schema_json) if form_obj else []
+    schema = json.loads(form_obj.schema_json) if form_obj and form_obj.schema_json else []
     return render_template('club/apply_event.html', event=event, schema=schema, now=datetime.utcnow())
+
 
 @bp.route('/my-registrations/<int:response_id>')
 @login_required
@@ -322,13 +559,44 @@ def registration_ticket(response_id):
     if response.student_id != current_user.id:
         flash('Unauthorized', 'danger')
         return redirect(url_for('index'))
-    return render_template('club/ticket.html', response=response)
+    
+    team = Team.query.get(response.team_id) if response.team_id else None
+    
+    # Ticket Status Logic
+    ticket_status = 'VALID'
+    status_msg = ''
+    
+    if team:
+        from models import TeamMember
+        members_count = TeamMember.query.filter_by(team_id=team.id).count()
+        event = response.event
+        
+        if members_count < event.team_size_min:
+            now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            deadline = event.registration_deadline or event.start_date or datetime.combine(event.date, datetime.min.time())
+            
+            if now > deadline:
+                if event.participation_type in ['solo', 'both'] and members_count == 1:
+                    ticket_status = 'ACCEPTED_SOLO'
+                    status_msg = 'Deadline passed: Automatically accepted as Solo participant.'
+                else:
+                    ticket_status = 'REJECTED'
+                    status_msg = f'Registration Rejected: Minimum team size of {event.team_size_min} was not met by the deadline.'
+            else:
+                ticket_status = 'PENDING'
+                status_msg = f'Pending Members: Your team needs {event.team_size_min - members_count} more member(s) to validate this ticket.'
 
-@bp.route('/scanner')
-def scanner():
+    return render_template('club/ticket.html', response=response, team=team, ticket_status=ticket_status, status_msg=status_msg)
+
+@bp.route('/events/<int:event_id>/scanner')
+def scanner(event_id):
     club_id = session.get('club_id')
     if not club_id: return redirect(url_for('club_portal.login'))
-    return render_template('club/scanner.html')
+    
+    event = Event.query.get_or_404(event_id)
+    if event.club_id != club_id: return "Unauthorized", 403
+    
+    return render_template('club/scanner.html', event=event)
 
 @bp.route('/mark-attendance', methods=['POST'])
 def mark_attendance():
@@ -336,16 +604,67 @@ def mark_attendance():
     if not club_id: return jsonify({'success': False, 'message': 'Not logged in'}), 401
     
     data = request.get_json()
-    ticket_id = data.get('ticket_id')
+    raw_scan = data.get('ticket_id', '')
+    event_id = data.get('event_id')
     session_type = data.get('session_type', 'Default')
     
-    response = EventResponse.query.filter_by(ticket_id=ticket_id).first()
+    if not event_id:
+        return jsonify({'success': False, 'message': 'Event ID missing'}), 400
+
+    event = Event.query.get(event_id)
+    if not event or event.club_id != club_id:
+        return jsonify({'success': False, 'message': 'Invalid Event'}), 404
+
+    # Date check: Only allow scanning on the day of the event
+    today = datetime.now().date()
+    event_start = event.start_date.date() if event.start_date else event.date
+    event_end = event.end_date.date() if event.end_date else event_start
+    
+    if today < event_start or today > event_end:
+        return jsonify({
+            'success': False, 
+            'message': f'Attendance scanning is only allowed on the day of the event ({event_start.strftime("%d %b %Y")})'
+        }), 403
+
+    # Extract Ticket ID if it's the full multi-line QR text
+    ticket_id = raw_scan
+    if "Ticket ID:" in raw_scan:
+        try:
+            # Format is "Ticket ID: ABCD0001\n..."
+            ticket_id = raw_scan.split('\n')[0].replace('Ticket ID:', '').strip()
+        except:
+            ticket_id = raw_scan.strip()
+    else:
+        ticket_id = raw_scan.strip()
+    
+    response = EventResponse.query.filter_by(ticket_id=ticket_id, event_id=event_id).first()
     if not response:
-        return jsonify({'success': False, 'message': 'Invalid Ticket ID'}), 404
+        # Check if they exist for a DIFFERENT event of this club
+        any_response = EventResponse.query.filter_by(ticket_id=ticket_id).first()
+        if any_response:
+             return jsonify({'success': False, 'message': f'Student is registered for "{any_response.event.name}", not this event.'}), 400
+        return jsonify({'success': False, 'message': 'Invalid Ticket or Student not registered for this event.'}), 404
         
     # Check if this student belongs to an event of this club
     if response.event.club_id != club_id:
         return jsonify({'success': False, 'message': 'Ticket does not belong to this club'}), 403
+        
+    # Validate Team Completeness
+    if response.team_id:
+        from models import TeamMember
+        members_count = TeamMember.query.filter_by(team_id=response.team_id).count()
+        if members_count < event.team_size_min:
+            now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            deadline = event.registration_deadline or event.start_date or datetime.combine(event.date, datetime.min.time())
+            
+            if now > deadline:
+                if event.participation_type in ['solo', 'both'] and members_count == 1:
+                    # Validated as fallback solo
+                    pass
+                else:
+                    return jsonify({'success': False, 'message': f'Registration Rejected: Minimum team size of {event.team_size_min} was not met by the deadline.'}), 400
+            else:
+                return jsonify({'success': False, 'message': f'Team is incomplete. Requires {event.team_size_min - members_count} more member(s).'}), 400
         
     # Check if already marked for this session
     existing = Attendance.query.filter_by(response_id=response.id, session_type=session_type).first()
@@ -413,7 +732,9 @@ def export_participants(event_id):
     event = Event.query.get_or_404(event_id)
     if event.club_id != club_id: return "Unauthorized", 403
     
-    responses = EventResponse.query.filter_by(event_id=event_id).all()
+    raw_responses = EventResponse.query.filter_by(event_id=event_id).all()
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    responses = filter_accepted_responses(event, raw_responses, now)
     
     data = []
     for r in responses:
@@ -447,10 +768,39 @@ def view_participants(event_id):
     event = Event.query.get_or_404(event_id)
     if event.club_id != club_id: return "Unauthorized", 403
     
-    responses = EventResponse.query.filter_by(event_id=event_id).all()
+    raw_responses = EventResponse.query.filter_by(event_id=event_id).all()
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    responses = filter_accepted_responses(event, raw_responses, now)
     
-    # Pre-parse JSON for template
+    teams = {t.id: t for t in Team.query.filter_by(event_id=event_id).all()}
+    
+    grouped_teams = {}
+    solo_responses = []
+    
+    # Pre-parse JSON for template and group
     for r in responses:
         r.custom_data = json.loads(r.response_json) if r.response_json else {}
         
-    return render_template('club/participants.html', event=event, responses=responses)
+        team_name = None
+        is_lead = False
+        if r.team_id and r.team_id in teams:
+            t_obj = teams[r.team_id]
+            team_name = t_obj.team_name
+            if t_obj.leader_id == r.student_id:
+                is_lead = True
+        else:
+            for k, v in r.custom_data.items():
+                if k.lower() in ['team name', 'teamname', 'name of team', 'name of the team']:
+                    team_name = v
+                    break
+        
+        r.is_leader = is_lead
+                    
+        if team_name:
+            if team_name not in grouped_teams:
+                grouped_teams[team_name] = []
+            grouped_teams[team_name].append(r)
+        else:
+            solo_responses.append(r)
+        
+    return render_template('club/participants.html', event=event, responses=responses, grouped_teams=grouped_teams, solo_responses=solo_responses)

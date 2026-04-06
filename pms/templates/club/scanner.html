@@ -6,7 +6,12 @@
 <div class="row justify-content-center">
     <div class="col-md-6">
         <div class="card p-4 shadow-sm border-0">
-            <h4 class="fw-bold mb-4 text-center"><i class="fas fa-qrcode text-primary me-2"></i> Attendance Scanner</h4>
+            <h4 class="fw-bold mb-0 text-center text-primary"><i class="fas fa-qrcode me-2"></i> Attendance Scanner</h4>
+            <div class="text-center mb-4">
+                <span class="badge bg-light text-muted border px-3 py-2 rounded-pill">
+                    <i class="fas fa-calendar-alt me-1"></i> {{ event.name }}
+                </span>
+            </div>
 
             <div class="mb-4">
                 <label class="form-label small fw-bold text-uppercase text-muted">Select Session</label>
@@ -32,8 +37,7 @@
             </div>
 
             <div class="text-center mt-3">
-                <p class="text-muted small"><i class="fas fa-info-circle me-1"></i> Scan the student's registration QR
-                    code to mark attendance.</p>
+                <p class="text-muted small"><i class="fas fa-info-circle me-1"></i> Scan the registration QR code for <strong>{{ event.name }}</strong> to mark attendance.</p>
             </div>
         </div>
     </div>
@@ -47,6 +51,7 @@
     const resultContainer = document.getElementById('result-container');
     const statusAlert = document.getElementById('status-alert');
     const studentInfo = document.getElementById('student-info');
+    const eventId = "{{ event.id }}";
 
     function onScanSuccess(decodedText, decodedResult) {
         html5QrCode.stop().then(() => {
@@ -69,6 +74,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 ticket_id: ticketId,
+                event_id: eventId,
                 session_type: sessionSelect.value
             })
         })
