@@ -100,6 +100,7 @@
   .info-list li i { color: var(--clr-success); margin-top: 2px; flex-shrink: 0; }
 </style>
 
+{% block admin_content %}
 <!-- Stat Cards -->
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3 animate-in" style="animation-delay:0s;">
@@ -185,6 +186,12 @@
         </div>
         <div class="tile-label">Departments</div>
       </a>
+      <a href="{{ url_for('admin_ledger') }}" class="action-tile">
+        <div class="tile-icon" style="background:rgba(16,185,129,0.1);color:var(--clr-success);">
+          <i class="fas fa-file-invoice-dollar"></i>
+        </div>
+        <div class="tile-label">Finance Ledger</div>
+      </a>
       <a href="{{ url_for('admin_settings') }}" class="action-tile">
         <div class="tile-icon" style="background:rgba(124,58,237,0.1);color:var(--clr-primary);">
           <i class="fas fa-sliders-h"></i>
@@ -224,6 +231,7 @@
     </div>
   </div>
 </div>
+{% endblock %}
 {% endblock %}
 
 

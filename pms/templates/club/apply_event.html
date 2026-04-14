@@ -71,11 +71,10 @@
                     </div>
                 </div>
 
-                <!-- Team Specific Fields (Hidden by default unless team selected) -->
+                <!-- Team Specific Fields -->
                 <div id="team_fields" class="mb-4 p-3 border rounded bg-light"
                     style="display: {{ 'block' if event.participation_type == 'team' else 'none' }};">
-                    <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-users me-1"></i> Team
-                        Configuration</h6>
+                    <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-users me-1"></i> Team Configuration</h6>
                     <div class="mb-3">
                         <label class="form-label">Action</label>
                         <select class="form-select" name="team_action" id="team_action" onchange="toggleTeamAction()">
@@ -87,203 +86,165 @@
                     <div id="create_team_group">
                         <div class="mb-3">
                             <label class="form-label">Team Name <span class="text-danger">*</span></label>
-                            <input type="text" name="team_name" class="form-control" placeholder="Enter your team name (case-insensitive)">
-                            <small class="text-muted">Members can join using this exact name or the code generated after registration.</small>
+                            <input type="text" name="team_name" class="form-control" placeholder="Enter team name">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Total Team Size <span class="text-danger">*</span></label>
-                            <input type="number" name="declared_size" id="declared_size" class="form-control" 
+                            <label class="form-label">Total Team Size</label>
+                            <input type="number" name="declared_size" class="form-control" 
                                 min="{{ event.team_size_min }}" max="{{ event.team_size_max }}" 
-                                value="{{ event.team_size_min }}" oninput="renderTeamMemberFields()">
-                            <small class="text-muted">Including yourself. Min: {{ event.team_size_min }}, Max: {{ event.team_size_max }}</small>
-                        </div>
-                        <div id="team_members_container" class="mt-3">
-                            <!-- Dynamic fields added via JS -->
+                                value="{{ event.team_size_min }}">
+                            <small class="text-muted">Min: {{ event.team_size_min }}, Max: {{ event.team_size_max }}</small>
                         </div>
                     </div>
 
                     <div id="join_team_group" style="display: none;">
                         <label class="form-label">Team Code or Exact Team Name <span class="text-danger">*</span></label>
-                        <input type="text" name="team_code" class="form-control" placeholder="e.g. ABC123 or MyTeamName">
-                        <small class="text-muted">Get this code or the exact case-sensitive name from your team leader.</small>
+                        <input type="text" name="team_code" class="form-control" placeholder="e.g. ABC123">
+                    </div>
+
+                    <div class="alert alert-info py-2 small mt-2">
+                        <i class="fas fa-info-circle me-1"></i> Every member must register individually using the Team Code.
                     </div>
                 </div>
                 {% endif %}
 
-                <!-- Dynamic Custom Form Fields -->
+                <!-- Dynamic Custom Form Fields (Always visible) -->
                 {% if schema %}
                 <div class="mb-4" id="event_custom_form">
-                    <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-list-ul me-1"></i> Event
-                        Specific Info</h6>
+                    <h6 class="fw-bold mb-3 small text-uppercase text-muted"><i class="fas fa-list-ul me-1"></i> Event Specific Info</h6>
                     {% for field in schema %}
-                    {% set is_team_name = (field.label|lower == 'team name' or field.label|lower == 'teamname' or field.label|lower == 'name of team' or field.label|lower == 'name of the team') %}
-                    {% set render_field = not (is_team_name and event.participation_type in ['team', 'both']) %}
-                    {% if render_field %}
                     <div class="mb-3">
-                        <label class="form-label">{{ field.label }} {% if field.required %}<span
-                                class="text-danger">*</span>{% endif %}</label>
-
+                        <label class="form-label">{{ field.label }} {% if field.required %}<span class="text-danger">*</span>{% endif %}</label>
                         {% if field.type == 'text' %}
-                        <input type="text" name="field_{{ field.label }}" class="form-control" {% if field.required
-                            %}required{% endif %}>
+                        <input type="text" name="field_{{ field.label }}" class="form-control" {% if field.required %}required{% endif %}>
                         {% elif field.type == 'number' %}
-                        <input type="number" name="field_{{ field.label }}" class="form-control" {% if field.required
-                            %}required{% endif %}>
+                        <input type="number" name="field_{{ field.label }}" class="form-control" {% if field.required %}required{% endif %}>
                         {% elif field.type == 'textarea' %}
-                        <textarea name="field_{{ field.label }}" class="form-control" rows="3" {% if field.required
-                            %}required{% endif %}></textarea>
+                        <textarea name="field_{{ field.label }}" class="form-control" rows="3" {% if field.required %}required{% endif %}></textarea>
                         {% elif field.type == 'dropdown' %}
-                        <select name="field_{{ field.label }}" class="form-select" {% if field.required %}required{%
-                            endif %}>
+                        <select name="field_{{ field.label }}" class="form-select" {% if field.required %}required{% endif %}>
                             <option value="">Select Options</option>
-                            {% for opt in field.options %}
-                            <option value="{{ opt }}">{{ opt }}</option>
-                            {% endfor %}
+                            {% for opt in field.options %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}
                         </select>
                         {% elif field.type == 'checkbox' %}
                         <div class="form-check mt-1">
-                            <input class="form-check-input" type="checkbox" name="field_{{ field.label }}" value="Yes"
-                                id="f_{{ loop.index }}">
+                            <input class="form-check-input" type="checkbox" name="field_{{ field.label }}" value="Yes" id="f_{{ loop.index }}">
                             <label class="form-check-label" for="f_{{ loop.index }}">Confirm</label>
                         </div>
                         {% endif %}
                     </div>
-                    {% endif %}
                     {% endfor %}
                 </div>
                 {% endif %}
 
-                {% if not event.is_registration_open %}
-                <div class="alert alert-danger text-center py-4 mb-4">
-                    <i class="fas fa-lock fa-3x mb-3"></i>
-                    <h5 class="fw-bold">Registrations Closed</h5>
-                    <p class="mb-0">Registrations for this event are currently closed.</p>
-                    {% if event.registration_deadline %}
-                    <p class="small mt-1">The deadline was {{ event.registration_deadline.strftime('%B %d, %Y at %H:%M')
-                        }}.</p>
-                    {% endif %}
-                    <a href="{{ url_for('club_portal.student_events') }}"
-                        class="btn btn-outline-danger btn-sm mt-3">Back to Events</a>
-                </div>
-                {% else %}
-                <div class="d-grid mt-5">
-                    <button type="submit" class="btn btn-primary btn-lg py-3 fw-bold">
-                        Confirm Registration <i class="fas fa-ticket-alt ms-2"></i>
+                <input type="hidden" name="payment_mode" id="payment_mode" value="pay">
+
+                <div class="d-grid gap-2 mt-4">
+                    {% if event.is_paid %}
+                    <button type="submit" onclick="document.getElementById('payment_mode').value='pay'" class="btn btn-primary btn-lg rounded-pill" id="submitBtn">
+                        <i class="fas fa-credit-card me-2"></i> Register & Pay Now
                     </button>
-                    <p class="text-center text-muted small mt-3">By clicking, you agree to follow club rules and event
-                        guidelines.</p>
+                    <button type="submit" onclick="document.getElementById('payment_mode').value='hold'" class="btn btn-outline-secondary rounded-pill">
+                        <i class="fas fa-clock me-2"></i> Register & Pay on Spot
+                    </button>
+                    {% else %}
+                    <button type="submit" class="btn btn-primary btn-lg rounded-pill" id="submitBtn">
+                        <i class="fas fa-ticket-alt me-2"></i> Complete Registration
+                    </button>
+                    {% endif %}
+                    <p class="text-center text-muted small mt-2">By clicking, you agree to follow guidelines.</p>
                 </div>
-                {% endif %}
             </form>
         </div>
     </div>
 </div>
+
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
     function toggleTeamFields(show) {
         const teamFields = document.getElementById('team_fields');
-        if (show) {
-            document.getElementById('team').checked = true;
-            teamFields.style.display = 'block';
-            document.getElementById('team_action').setAttribute('required', 'required');
-        } else {
-            document.getElementById('solo').checked = true;
-            teamFields.style.display = 'none';
-            document.getElementById('team_action').removeAttribute('required');
+        if (teamFields) {
+            teamFields.style.display = show ? 'block' : 'none';
         }
-        if (typeof renderTeamMemberFields === 'function') {
-            renderTeamMemberFields();
+        const teamAction = document.getElementById('team_action');
+        if (teamAction) {
+            if (show) teamAction.setAttribute('required', 'required');
+            else teamAction.removeAttribute('required');
         }
-    }
-
-    function renderTeamMemberFields() {
-        const sizeInput = document.getElementById('declared_size');
-        const container = document.getElementById('team_members_container');
-        if (!sizeInput || !container) return;
-        
-        let size = parseInt(sizeInput.value) || {{ event.team_size_min }};
-        let extraMembers = size - 1;
-        let maxAllowed = {{ event.team_size_max }} - 1;
-        
-        if (extraMembers > maxAllowed) extraMembers = maxAllowed;
-        if (extraMembers < 0) extraMembers = 0;
-        
-        let html = '';
-        if (extraMembers > 0) {
-            html += '<h6 class="fw-bold mt-4 mb-2 small text-uppercase text-muted"><i class="fas fa-user-plus me-1"></i> Register Teammates (Optional)</h6>';
-            html += '<p class="small text-muted mb-3">You can enter their roll numbers right now, or leave blank and let them join later with the Team Code/Name.</p>';
-            
-            for (let i = 1; i <= extraMembers; i++) {
-                html += `
-                <div class="mb-2">
-                    <label class="form-label small">Teammate ${i} Roll Number</label>
-                    <input type="text" name="member_roll_no_${i}" class="form-control form-control-sm" placeholder="e.g. 21X41A0501" style="text-transform: uppercase;" pattern="(?=.*[A-Za-z])(?=.*\\d)[A-Za-z0-9]{5,20}">
-                </div>
-                `;
-            }
-        }
-        container.innerHTML = html;
     }
 
     function toggleTeamAction() {
-        const action = document.getElementById('team_action').value;
+        const actionSelect = document.getElementById('team_action');
+        if (!actionSelect) return;
+        const action = actionSelect.value;
         const createGroup = document.getElementById('create_team_group');
         const joinGroup = document.getElementById('join_team_group');
-        const customForm = document.getElementById('event_custom_form');
-
-        if (action === 'create') {
-            createGroup.style.display = 'block';
-            joinGroup.style.display = 'none';
-            if (customForm) customForm.style.display = 'block';
-            
-            // Enable inputs
-            createGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = false);
-            if (customForm) customForm.querySelectorAll('input, select, textarea').forEach(el => el.disabled = false);
-            joinGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = true);
-            
-            createGroup.querySelector('input').setAttribute('required', 'required');
-            joinGroup.querySelector('input').removeAttribute('required');
-        } else {
-            createGroup.style.display = 'none';
-            joinGroup.style.display = 'block';
-            if (customForm) customForm.style.display = 'none';
-            
-            // Disable inputs
-            createGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = true);
-            if (customForm) customForm.querySelectorAll('input, select, textarea').forEach(el => el.disabled = true);
-            joinGroup.querySelectorAll('input, select, textarea').forEach(el => el.disabled = false);
-            
-            createGroup.querySelector('input').removeAttribute('required');
-            joinGroup.querySelector('input').setAttribute('required', 'required');
-        }
+        
+        if (createGroup) createGroup.style.display = action === 'create' ? 'block' : 'none';
+        if (joinGroup) joinGroup.style.display = action === 'join' ? 'block' : 'none';
+        
+        if (createGroup) createGroup.querySelectorAll('input, select').forEach(el => el.disabled = (action !== 'create'));
+        if (joinGroup) joinGroup.querySelectorAll('input, select').forEach(el => el.disabled = (action !== 'join'));
     }
 
-    // Initialize on load
-    window.onload = function () {
+    document.querySelector('form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const btn = document.getElementById('submitBtn');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing...';
+        btn.disabled = true;
+
+        fetch(window.location.href, {
+            method: 'POST',
+            body: new FormData(this),
+            headers: {'X-Requested-With': 'XMLHttpRequest'}
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'pay') {
+                const options = {
+                    "key": data.key, "amount": data.amount, "currency": "INR",
+                    "name": "GenZCampus", "description": data.event_name,
+                    "order_id": data.order_id,
+                    "handler": function (response) {
+                        fetch("{{ url_for('club_portal.verify_payment') }}", {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+                            body: JSON.stringify({
+                                response_id: data.response_id,
+                                razorpay_order_id: response.razorpay_order_id,
+                                razorpay_payment_id: response.razorpay_payment_id,
+                                razorpay_signature: response.razorpay_signature
+                            })
+                        })
+                        .then(r => r.json())
+                        .then(v => { if (v.success) window.location.href = v.redirect; else alert(v.message); });
+                    },
+                    "prefill": {"name": data.user_name, "email": data.user_email},
+                    "theme": {"color": "#0d6efd"},
+                    "modal": {"ondismiss": () => { btn.innerHTML = originalText; btn.disabled = false; }}
+                };
+                new Razorpay(options).open();
+            } else if (data.status === 'success') {
+                window.location.href = data.redirect;
+            } else {
+                alert(data.message || "Error");
+                btn.innerHTML = originalText; btn.disabled = false;
+            }
+        })
+        .catch(err => { alert("Error occurred"); btn.innerHTML = originalText; btn.disabled = false; });
+    });
+
+    window.onload = () => {
         const teamRadio = document.getElementById('team');
-        if (teamRadio && teamRadio.checked) {
-            toggleTeamFields(true);
-        }
+        if (teamRadio && teamRadio.checked) toggleTeamFields(true);
         toggleTeamAction();
-        if (typeof renderTeamMemberFields === 'function') {
-            renderTeamMemberFields();
-        }
     };
 </script>
 
 <style>
-    .cursor-pointer {
-        cursor: pointer;
-    }
-
-    .hover-bg-light:hover {
-        background-color: #f8f9fa;
-    }
-
-    .form-check-input:checked+.form-check-label .card {
-        border-color: var(--bs-primary) !important;
-        background-color: #f0f7ff;
-    }
+    .cursor-pointer { cursor: pointer; }
+    .hover-bg-light:hover { background-color: #f8f9fa; }
+    .form-check-input:checked+.form-check-label .card { border-color: var(--bs-primary) !important; background-color: #f0f7ff; }
 </style>
 {% endblock %}
-
-

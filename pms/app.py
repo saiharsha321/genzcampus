@@ -6,16 +6,27 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from flask_mail import Mail, Message
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta
-from models import db, User, Club, Event, Permission, Department, SystemConfig, EventResponse, ClassAttendance, TimeTable, ClassHoliday
+from models import db, User, Club, Event, Permission, Department, SystemConfig, EventResponse, ClassAttendance, TimeTable, ClassHoliday, FinanceTransaction
 from config import Config
 from utils import allowed_file, validate_roll_no
 
 # Blueprint registration moved down
 import random
 import string
+import razorpay
 
 app = Flask(__name__)
 app.config.from_object(Config)
+
+# Razorpay Client Initialization
+def get_razorpay_client():
+    key_id = SystemConfig.query.filter_by(key='razorpay_key_id').first()
+    key_secret = SystemConfig.query.filter_by(key='razorpay_key_secret').first()
+    if key_id and key_secret:
+        return razorpay.Client(auth=(key_id.value, key_secret.value))
+    return None
+
+app.jinja_env.globals.update(get_razorpay_client=get_razorpay_client)
 
 # Initialize extensions
 db.init_app(app)
@@ -186,13 +197,17 @@ def student_signup():
             departments = Department.query.all() # Need to re-fetch departments
             return render_template('student_signup.html', departments=departments)
         
-        if User.query.filter_by(roll_no=roll_no).first():
-            flash('Roll number already registered', 'danger')
+        existing_user = User.query.filter_by(email=email).first()
+        if existing_user:
+            if existing_user.role == 'student' and not existing_user.is_verified:
+                flash('Email already registered but not verified. Redirecting to OTP verification.', 'info')
+                return redirect(url_for('verify_otp', user_id=existing_user.id))
+            flash('Email already registered', 'danger')
             departments = Department.query.all()
             return render_template('student_signup.html', departments=departments)
         
-        if User.query.filter_by(email=email).first():
-            flash('Email already registered', 'danger')
+        if User.query.filter_by(roll_no=roll_no).first():
+            flash('Roll number already registered', 'danger')
             departments = Department.query.all()
             return render_template('student_signup.html', departments=departments)
         
@@ -275,7 +290,110 @@ def verify_otp(user_id):
         else:
             flash('Invalid or expired OTP', 'danger')
             
-    return render_template('verify_otp.html', email=user.email)
+    return render_template('verify_otp.html', email=user.email, user_id=user.id)
+
+@app.route('/resend-otp/<int:user_id>')
+def resend_otp(user_id):
+    user = User.query.get_or_404(user_id)
+    if user.is_verified:
+        flash('Account already verified.', 'info')
+        return redirect(url_for('index'))
+    
+    # Generate new OTP
+    otp = ''.join(random.choices(string.digits, k=6))
+    user.otp = otp
+    user.otp_expiry = datetime.utcnow() + timedelta(minutes=10)
+    db.session.commit()
+    
+    print(f"DEBUG: Resent OTP for {user.email}: {otp}")
+    
+    try:
+        # Fetch dynamic SMTP settings
+        smtp_config = {}
+        configs = SystemConfig.query.all()
+        for config in configs:
+            smtp_config[config.key] = config.value
+        
+        if smtp_config.get('MAIL_USERNAME') and smtp_config.get('MAIL_PASSWORD'):
+            app.config.update(
+                MAIL_SERVER=smtp_config.get('MAIL_SERVER', 'smtp.gmail.com'),
+                MAIL_PORT=int(smtp_config.get('MAIL_PORT', 587)),
+                MAIL_USERNAME=smtp_config.get('MAIL_USERNAME'),
+                MAIL_PASSWORD=smtp_config.get('MAIL_PASSWORD'),
+                MAIL_USE_TLS=smtp_config.get('MAIL_USE_TLS') == 'True'
+            )
+            mail_new = Mail(app)
+            
+            msg = Message('Verify your GenZCampus Account - New OTP',
+                        sender=app.config['MAIL_USERNAME'],
+                        recipients=[user.email])
+            msg.body = f'Your new OTP is: {otp}. It expires in 10 minutes.'
+            mail_new.send(msg)
+            flash('A new OTP has been sent to your email.', 'success')
+        else:
+            flash('New OTP generated and printed to console (Dev Mode/SMTP Not Configured).', 'info')
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        flash('Error sending email. Check console for OTP.', 'warning')
+    
+    return redirect(url_for('verify_otp', user_id=user.id))
+
+@app.route('/change-email-otp/<int:user_id>', methods=['GET', 'POST'])
+def change_email_otp(user_id):
+    user = User.query.get_or_404(user_id)
+    if user.is_verified:
+        flash('Account already verified.', 'info')
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        new_email = request.form.get('email')
+        
+        # Check if email is already taken
+        if User.query.filter_by(email=new_email).first():
+            flash('Email already registered', 'danger')
+            return render_template('change_email_on_otp.html', user=user)
+        
+        user.email = new_email
+        # Generate new OTP for the new email
+        otp = ''.join(random.choices(string.digits, k=6))
+        user.otp = otp
+        user.otp_expiry = datetime.utcnow() + timedelta(minutes=10)
+        db.session.commit()
+        
+        print(f"DEBUG: Change Email OTP for {user.email}: {otp}")
+        
+        try:
+            # Send new OTP
+            smtp_config = {}
+            configs = SystemConfig.query.all()
+            for config in configs:
+                smtp_config[config.key] = config.value
+            
+            if smtp_config.get('MAIL_USERNAME') and smtp_config.get('MAIL_PASSWORD'):
+                app.config.update(
+                    MAIL_SERVER=smtp_config.get('MAIL_SERVER', 'smtp.gmail.com'),
+                    MAIL_PORT=int(smtp_config.get('MAIL_PORT', 587)),
+                    MAIL_USERNAME=smtp_config.get('MAIL_USERNAME'),
+                    MAIL_PASSWORD=smtp_config.get('MAIL_PASSWORD'),
+                    MAIL_USE_TLS=smtp_config.get('MAIL_USE_TLS') == 'True'
+                )
+                mail_new = Mail(app)
+                
+                msg = Message('Verify your GenZCampus Account - Email Updated',
+                            sender=app.config['MAIL_USERNAME'],
+                            recipients=[user.email])
+                msg.body = f'Your email was updated. Your new OTP is: {otp}. It expires in 10 minutes.'
+                mail_new.send(msg)
+                flash('Email updated and OTP sent to new address.', 'success')
+            else:
+                flash('Email updated. New OTP printed to console (Dev Mode/SMTP Not Configured).', 'info')
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            flash('Email updated but error sending email. Check console for OTP.', 'warning')
+            
+        return redirect(url_for('verify_otp', user_id=user.id))
+        
+    return render_template('change_email_on_otp.html', user=user)
 
 @app.route('/forgot-password', methods=['GET', 'POST'])
 def forgot_password():
@@ -2303,6 +2421,122 @@ def download_template():
     except Exception as e:
         flash(f'Error generating template: {str(e)}', 'danger')
         return redirect(url_for('manage_students'))
+
+@app.route('/admin/ledger')
+@login_required
+def admin_ledger():
+    if not current_user.is_admin():
+        flash('Access denied', 'danger')
+        return redirect(url_for('index'))
+    
+    # Get all clubs
+    clubs = Club.query.all()
+    
+    # Get events that have collected funds but not fully settled
+    from sqlalchemy import and_
+    events_with_funds = Event.query.filter(Event.total_collected > Event.total_settled).all()
+    
+    # Filters
+    club_filter = request.args.get('club_id', type=int)
+    cat_filter = request.args.get('category')
+    
+    query = FinanceTransaction.query
+    if club_filter:
+        query = query.filter_by(club_id=club_filter)
+    if cat_filter:
+        query = query.filter_by(category=cat_filter)
+        
+    transactions = query.order_by(FinanceTransaction.created_at.desc()).limit(200).all()
+    
+    return render_template('admin/ledger.html', 
+                          clubs=clubs, 
+                          events_with_funds=events_with_funds, 
+                          transactions=transactions,
+                          club_filter=club_filter,
+                          cat_filter=cat_filter)
+
+@app.route('/admin/settle', methods=['POST'])
+@login_required
+def admin_settle():
+    if not current_user.is_admin():
+        flash('Access denied', 'danger')
+        return redirect(url_for('index'))
+    
+    club_id = request.form.get('club_id', type=int)
+    event_id = request.form.get('event_id', type=int)
+    amount = float(request.form.get('amount', 0))
+    ref = request.form.get('reference', '') or 'Manual Settlement'
+    
+    if amount <= 0:
+        flash('Invalid amount', 'danger')
+        return redirect(url_for('admin_ledger'))
+    
+    club = Club.query.get_or_404(club_id)
+    event = Event.query.get(event_id) if event_id else None
+    
+    # Update balances
+    if event:
+        # Settle specific event
+        if amount > (event.total_collected - event.total_settled):
+            flash('Amount exceeds event balance', 'danger')
+            return redirect(url_for('admin_ledger'))
+        event.total_settled += amount
+    else:
+        # Settle general club balance
+        if amount > club.pending_settlement:
+            flash('Amount exceeds club pending balance', 'danger')
+            return redirect(url_for('admin_ledger'))
+        club.pending_settlement -= amount
+    
+    club.balance += amount
+    
+    # Record transaction
+    transaction = FinanceTransaction(
+        club_id=club.id,
+        event_id=event.id if event else None,
+        amount=amount,
+        type='debit',
+        category='settlement',
+        description=f"Settlement to club. Ref: {ref}" + (f" (Event: {event.name})" if event else "")
+    )
+    db.session.add(transaction)
+    db.session.commit()
+    
+    flash(f'Settlement of ₹{amount} recorded for {club.name}', 'success')
+    return redirect(url_for('admin_ledger'))
+
+@app.route('/admin/ledger/export')
+@login_required
+def admin_export_ledger():
+    if not current_user.is_admin(): return "Unauthorized", 403
+    
+    import csv
+    from io import StringIO
+    from flask import Response
+    
+    txs = FinanceTransaction.query.order_by(FinanceTransaction.created_at.desc()).all()
+    
+    def generate():
+        data = StringIO()
+        writer = csv.writer(data)
+        writer.writerow(['Date', 'Club', 'Event', 'Amount', 'Type', 'Category', 'Description'])
+        yield data.getvalue()
+        data.seek(0); data.truncate(0)
+        
+        for tx in txs:
+            writer.writerow([
+                tx.created_at.strftime('%Y-%m-%d %H:%M'),
+                tx.club.name if tx.club else 'N/A',
+                tx.event.name if tx.event else 'General',
+                tx.amount,
+                tx.type,
+                tx.category,
+                tx.description
+            ])
+            yield data.getvalue()
+            data.seek(0); data.truncate(0)
+
+    return Response(generate(), mimetype='text/csv', headers={"Content-Disposition": "attachment; filename=financial_ledger.csv"})
 
 if __name__ == '__main__':
     with app.app_context():

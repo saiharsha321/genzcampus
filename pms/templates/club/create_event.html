@@ -59,6 +59,7 @@
                 </div>
 
                 <div class="row">
+                <div class="row">
                     <div class="col-md-6 mb-3">
                         <label class="form-label">Participation Type</label>
                         <select name="participation_type" id="participation_type" class="form-select" onchange="toggleTeamSizeConfig()">
@@ -83,6 +84,38 @@
                     </div>
                 </div>
 
+                <div class="card bg-light border-0 mb-3">
+                    <div class="card-body">
+                        <div class="row align-items-center">
+                            <div class="col-md-6">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="is_paid" id="is_paid" onchange="togglePriceConfig()">
+                                    <label class="form-check-label fw-bold" for="is_paid">
+                                        <i class="fas fa-hand-holding-usd text-success me-2"></i> Paid Event
+                                    </label>
+                                </div>
+                            </div>
+                        <div class="row g-3" id="price_config" style="display: none;">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Amount per person (₹)</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">₹</span>
+                                    <input type="number" name="amount" class="form-control" placeholder="0.00" step="0.01" min="0">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Payment Model</label>
+                                <select name="payment_model" class="form-select">
+                                    <option value="individual">Individual Pay (Split)</option>
+                                    <option value="leader">Leader Pays for Team (Full)</option>
+                                </select>
+                                <small class="text-muted" style="font-size: 11px;">"Leader Pays" only applies to Team participation.</small>
+                            </div>
+                        </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="d-grid mt-4">
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-save me-2"></i> Create Event & Build Form
@@ -102,8 +135,23 @@
             config.style.display = 'none';
         }
     }
+    
+    function togglePriceConfig() {
+        const isPaid = document.getElementById('is_paid').checked;
+        const config = document.getElementById('price_config');
+        config.style.display = isPaid ? 'flex' : 'none';
+        
+        const amountInput = document.querySelector('input[name="amount"]');
+        if (isPaid) {
+            amountInput.setAttribute('required', 'required');
+        } else {
+            amountInput.removeAttribute('required');
+        }
+    }
+    
     window.addEventListener('load', function() {
         toggleTeamSizeConfig();
+        togglePriceConfig();
         
         // Set default times (09:00 start, 16:00 end)
         const now = new Date();

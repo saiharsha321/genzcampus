@@ -97,6 +97,7 @@ class Club(db.Model):
     password_hash = db.Column(db.String(256))
     is_active = db.Column(db.Boolean, default=True)
     balance = db.Column(db.Float, default=0.0)
+    pending_settlement = db.Column(db.Float, default=0.0)
     
     coordinator = db.relationship('User', backref='clubs_coordinated')
     events = db.relationship('Event', backref='club', lazy=True)
@@ -135,6 +136,11 @@ class Event(db.Model):
     team_size_min = db.Column(db.Integer, default=1)
     team_size_max = db.Column(db.Integer, default=1)
     max_registrations = db.Column(db.Integer, default=0) # 0 for unlimited
+    is_paid = db.Column(db.Boolean, default=False)
+    amount = db.Column(db.Float, default=0.0)
+    payment_model = db.Column(db.String(20), default='individual') # individual, leader
+    total_collected = db.Column(db.Float, default=0.0)
+    total_settled = db.Column(db.Float, default=0.0)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -166,6 +172,9 @@ class EventResponse(db.Model):
     response_json = db.Column(db.Text, nullable=False) # JSON data of answers
     ticket_id = db.Column(db.String(50), unique=True)
     qr_code_data = db.Column(db.Text) # Base64 or path
+    payment_status = db.Column(db.String(20), default='free') # free, pending, completed, failed
+    razorpay_order_id = db.Column(db.String(100))
+    razorpay_payment_id = db.Column(db.String(100))
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     student = db.relationship('User', backref=db.backref('event_responses', overlaps="student_rel,event_responses_rel"), overlaps="event_responses_rel,student_rel")
@@ -181,6 +190,7 @@ class Team(db.Model):
     team_name = db.Column(db.String(100))
     team_id_code = db.Column(db.String(10), unique=True) # For others to join
     declared_size = db.Column(db.Integer, default=1)
+    is_paid = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     leader = db.relationship('User', backref='teams_led')
@@ -219,15 +229,7 @@ class ClassAttendance(db.Model):
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('class_attendance_records', lazy='dynamic', cascade='all, delete-orphan'))
     faculty = db.relationship('User', foreign_keys=[faculty_id])
 
-class FinanceTransaction(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    club_id = db.Column(db.Integer, db.ForeignKey('club.id'), nullable=False)
-    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=True)
-    amount = db.Column(db.Float, nullable=False)
-    type = db.Column(db.String(10)) # credit, debit
-    category = db.Column(db.String(50)) # budget, prize, expense, etc.
-    description = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 class Permission(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -298,3 +300,15 @@ class ClassHoliday(db.Model):
     declared_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_at  = db.Column(db.DateTime, default=datetime.utcnow)
 
+class FinanceTransaction(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    club_id = db.Column(db.Integer, db.ForeignKey('club.id'), nullable=False)
+    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=True)
+    amount = db.Column(db.Float, nullable=False)
+    type = db.Column(db.String(10), nullable=False) # credit or debit
+    category = db.Column(db.String(50)) # e.g., registration_fee, settlement
+    description = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    club = db.relationship('Club', backref='transactions')
+    event = db.relationship('Event', backref='transactions')

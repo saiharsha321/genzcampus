@@ -2,10 +2,11 @@
 from flask import render_template, redirect, url_for, flash, request, session, jsonify, send_file
 from flask_login import login_user, logout_user, login_required, current_user
 from club_portal import club_portal as bp
-from models import db, Club, ClubMember, Event, EventForm, EventResponse, Team, TeamMember, Attendance, FinanceTransaction, User
+from models import db, Club, ClubMember, Event, EventForm, EventResponse, Team, TeamMember, Attendance, FinanceTransaction, User, SystemConfig
 from utils import allowed_file
 import json
 import qrcode
+import razorpay
 import io
 import base64
 from datetime import datetime, timedelta
@@ -139,6 +140,10 @@ def create_event():
             flash('Registration deadline cannot be after the event start date.', 'danger')
             return redirect(url_for('club_portal.create_event'))
 
+        is_paid = request.form.get('is_paid') == 'on'
+        amount = float(request.form.get('amount', 0.0)) if is_paid else 0.0
+        payment_model = request.form.get('payment_model', 'individual')
+
         event = Event(
             club_id=club_id,
             name=name,
@@ -153,6 +158,9 @@ def create_event():
             team_size_max=team_size_max,
             max_registrations=max_registrations,
             allowed_departments=json.dumps(allowed_depts),
+            is_paid=is_paid,
+            amount=amount,
+            payment_model=payment_model,
             status='upcoming'
         )
         db.session.add(event)
@@ -329,224 +337,146 @@ def apply_event(event_id):
             f.write(debug_info)
 
         team_id = None
+        target_team = None
         extra_members_found = []
         # Get from form
         ptype = request.form.get('participation_choice', 'solo')
         
-        # Calculate slots needed for limit check
+        # Calculate slots needed (Always 1 now as everyone registers individually)
         reg_slots_needed = 1
-        if ptype == 'team' and request.form.get('team_action') == 'create':
-            try:
-                dec_size = int(request.form.get('declared_size', 1))
-                extra_cnt = 0
-                for i in range(1, dec_size):
-                    if request.form.get(f'member_roll_no_{i}'):
-                        extra_cnt += 1
-                reg_slots_needed = 1 + extra_cnt
-            except: pass
-
         if event.max_registrations > 0:
             current_reg_count = EventResponse.query.filter_by(event_id=event_id).count()
             if (current_reg_count + reg_slots_needed) > event.max_registrations:
-                flash(f'Limit reached. Only {event.max_registrations - current_reg_count} slots left, but you need {reg_slots_needed}.', 'danger')
-                return redirect(request.url)
+                return jsonify({'status': 'error', 'message': 'Limit reached. No more slots left for this event.'})
+
+        payment_mode_selected = request.form.get('payment_mode', 'pay') # pay or hold
 
         if event.participation_type in ['team', 'both'] and ptype == 'team':
             team_action = request.form.get('team_action') # create or join
             if team_action == 'create':
                 t_name = request.form.get('team_name')
                 declared_size_str = request.form.get('declared_size')
-                
                 if not t_name:
-                    flash('Team name is required to create a team.', 'danger')
-                    return redirect(request.url)
+                    return jsonify({'status': 'error', 'message': 'Team name is required.'})
                 
                 existing_t = Team.query.filter(Team.event_id==event_id, Team.team_name.ilike(t_name)).first()
                 if existing_t:
-                    flash('This Team Name is already taken for this event.', 'danger')
-                    return redirect(request.url)
+                    return jsonify({'status': 'error', 'message': 'This Team Name is already taken.'})
                     
-                try:
-                    declared_size = int(declared_size_str)
-                except (ValueError, TypeError):
-                    declared_size = event.team_size_min
-                
-                if declared_size < event.team_size_min or declared_size > event.team_size_max:
-                    flash(f'Team size must be between {event.team_size_min} and {event.team_size_max}', 'danger')
-                    return redirect(request.url)
-                
                 import random, string
-                rand_num = ''.join(random.choices(string.digits, k=4))
-                t_code = (t_name[:4].upper() + rand_num)[:10]
+                t_code = (t_name[:4].upper() + ''.join(random.choices(string.digits, k=4)))[:10]
                 
-                new_team = Team(event_id=event_id, leader_id=current_user.id, team_name=t_name, team_id_code=t_code, declared_size=declared_size)
+                new_team = Team(event_id=event_id, leader_id=current_user.id, team_name=t_name, team_id_code=t_code, declared_size=int(declared_size_str or 1))
                 db.session.add(new_team)
                 db.session.flush()
                 team_id = new_team.id
-                
-                leader_mem = TeamMember(team_id=team_id, user_id=current_user.id, role='leader')
-                db.session.add(leader_mem)
-                
-                for i in range(1, declared_size):
-                    roll_no = request.form.get(f'member_roll_no_{i}')
-                    if roll_no:
-                        roll_no = roll_no.strip().upper()
-                        user_mem = User.query.filter_by(roll_no=roll_no).first()
-                        if not user_mem:
-                            flash(f'Student with Roll Number {roll_no} not found. They must sign up first.', 'danger')
-                            db.session.rollback()
-                            return redirect(request.url)
-                        
-                        existing_mem = EventResponse.query.filter_by(event_id=event_id, student_id=user_mem.id).first()
-                        if existing_mem:
-                            flash(f'Student {roll_no} is already registered for this event.', 'danger')
-                            db.session.rollback()
-                            return redirect(request.url)
-                            
-                        new_mem = TeamMember(team_id=team_id, user_id=user_mem.id, role='member')
-                        db.session.add(new_mem)
-                        extra_members_found.append(user_mem)
+                db.session.add(TeamMember(team_id=team_id, user_id=current_user.id, role='leader'))
+                target_team = new_team
 
             elif team_action == 'join':
                 t_code_or_name = request.form.get('team_code', '').strip()
-                if not t_code_or_name:
-                    flash('Team Code or Name is required.', 'danger')
-                    return redirect(request.url)
-                    
-                # Robust case-insensitive lookup
                 from sqlalchemy import or_, func
-                target_team = Team.query.filter(
-                    Team.event_id == event_id,
-                    or_(
-                        func.lower(Team.team_id_code) == t_code_or_name.lower(),
-                        func.lower(Team.team_name) == t_code_or_name.lower()
-                    )
-                ).first()
-                    
+                target_team = Team.query.filter(Team.event_id == event_id, or_(func.lower(Team.team_id_code) == t_code_or_name.lower(), func.lower(Team.team_name) == t_code_or_name.lower())).first()
                 if not target_team:
-                    # Check if the team exists in ANY event to provide a better error
-                    other_event_team = Team.query.filter(
-                        or_(
-                            func.lower(Team.team_id_code) == t_code_or_name.lower(),
-                            func.lower(Team.team_name) == t_code_or_name.lower()
-                        )
-                    ).first()
-                    
-                    if other_event_team:
-                        flash(f'The team "{t_code_or_name}" exists but is registered for a different event: "{other_event_team.event.name}".', 'warning')
-                    else:
-                        # Log failed attempt for debugging
-                        with open('instance/join_debug.log', 'a') as f:
-                            import os
-                            if not os.path.exists('instance'): os.makedirs('instance')
-                            f.write(f"{datetime.now()}: Join Failed. Event {event_id}, User {current_user.id}, Attempt: '{t_code_or_name}'\n")
-                        flash(f'Team "{t_code_or_name}" not found. Please verify the Code or Name and ensure it belongs to this event.', 'danger')
-                    return redirect(request.url)
+                    return jsonify({'status': 'error', 'message': 'Team not found.'})
                 
-                # Check current member count
-                memo_count = TeamMember.query.filter_by(team_id=target_team.id).count()
-                if memo_count >= target_team.declared_size:
-                    flash(f'Team "{target_team.team_name}" is already full ({target_team.declared_size} members).', 'danger')
-                    return redirect(request.url)
+                if TeamMember.query.filter_by(team_id=target_team.id).count() >= target_team.declared_size:
+                    return jsonify({'status': 'error', 'message': 'Team is full.'})
                 
                 team_id = target_team.id
-                # Check if already a member through other means
-                existing_member = TeamMember.query.filter_by(team_id=team_id, user_id=current_user.id).first()
-                if not existing_member:
-                    new_mem = TeamMember(team_id=team_id, user_id=current_user.id, role='member')
-                    db.session.add(new_mem)
+                if not TeamMember.query.filter_by(team_id=team_id, user_id=current_user.id).first():
+                    db.session.add(TeamMember(team_id=team_id, user_id=current_user.id, role='member'))
                 db.session.flush()
 
-        # Collect custom form data
+        # Collect custom form data (Mandatory for all now)
         responses = {}
-        target_team = None
-        if team_id:
-            target_team = Team.query.get(team_id)
+        schema = json.loads(form_obj.schema_json) if form_obj and form_obj.schema_json else []
+        for field in schema:
+            val = request.form.get(f"field_{field['label']}")
+            if field.get('required') and not val:
+                return jsonify({'status': 'error', 'message': f"{field['label']} is required"})
+            responses[field['label']] = val
 
-        skip_form = (ptype == 'team' and request.form.get('team_action') == 'join')
-        
-        if skip_form and target_team:
-            # Inherit Lead's responses
-            lead_resp = EventResponse.query.filter_by(event_id=event_id, student_id=target_team.leader_id).first()
-            if lead_resp:
-                responses = json.loads(lead_resp.response_json)
-        else:
-            schema = json.loads(form_obj.schema_json) if form_obj and form_obj.schema_json else []
-            for field in schema:
-                f_lower = field['label'].lower()
-                if f_lower in ['team name', 'teamname', 'name of team', 'name of the team'] and event.participation_type in ['team', 'both'] and ptype == 'team':
-                    responses[field['label']] = target_team.team_name if (request.form.get('team_action') == 'join') else t_name
+        # Calculate Payable Amount
+        payable_amount = 0.0
+        if event.is_paid:
+            if event.payment_model == 'leader':
+                if target_team and target_team.leader_id == current_user.id:
+                    payable_amount = event.amount * target_team.declared_size
                 else:
-                    val = request.form.get(f"field_{field['label']}")
-                    if field.get('required') and not val:
-                        flash(f"{field['label']} is required", 'danger')
-                        return redirect(request.url)
-                    responses[field['label']] = val
+                    # If leader has already paid, member pays 0. Else member cannot pay share in 'leader pays' model.
+                    payable_amount = 0.0 if (target_team and target_team.is_paid) else -1.0 
+            else: # individual/split
+                payable_amount = event.amount
+
+        if payable_amount == -1.0:
+            return jsonify({'status': 'error', 'message': 'This event requires the team leader to pay for the entire team. Please contact your team leader.'})
 
         # Helper to generate tickets
-        def create_ticket_record(stu_id, t_id):
+        def create_ticket_record():
             import qrcode, io, base64
-            student = User.query.get(stu_id)
-            
-            # Ticket ID generation logic - Use Team Lead's details if in a team
-            id_source_student = student
-            if t_id:
-                t_obj = Team.query.get(t_id)
-                if t_obj:
-                    lead_stu = User.query.get(t_obj.leader_id)
-                    if lead_stu:
-                        id_source_student = lead_stu
-
-            prefix = id_source_student.roll_no[:2] if id_source_student.roll_no and len(id_source_student.roll_no) >= 2 else "00"
-            dept_code = get_dept_code(id_source_student.department)
-            
-            # Ensure ticket_id is globally unique
+            # Ticket ID generation
+            prefix = current_user.roll_no[:2] if current_user.roll_no and len(current_user.roll_no) >= 2 else "00"
+            dept_code = get_dept_code(current_user.department)
             serial = EventResponse.query.filter_by(event_id=event_id).count() + 1
+            
+            # Ensure global uniqueness by including event_id and adding a collision check loop
             while True:
-                candidate_id = f"{prefix}{dept_code}{str(serial).zfill(4)}"
-                if not EventResponse.query.filter_by(ticket_id=candidate_id).first():
-                    ticket_id = candidate_id
+                # Format: [Year][Dept][EventID][Serial]
+                # Example: 24CS160001
+                ticket_id = f"{prefix}{dept_code}{event_id:02d}{str(serial).zfill(4)}"
+                if not EventResponse.query.filter_by(ticket_id=ticket_id).first():
                     break
                 serial += 1
             
-            # QR Data: Basic details + Team list
-            qr_text = f"Ticket ID: {ticket_id}\nName: {student.get_full_name()}\nRoll No: {student.roll_no}\nEvent: {event.name}\nDate: {event.start_date.strftime('%d %b %Y') if event.start_date else 'TBA'}"
-            
-            if t_id:
-                from models import TeamMember
-                all_mems = TeamMember.query.filter_by(team_id=t_id).all()
-                mem_list = "\nTeam Members:\n" + "\n".join([f"- {m.user.get_full_name()} ({m.user.roll_no})" for m in all_mems])
-                qr_text += mem_list
-
+            qr_text = f"Ticket ID: {ticket_id}\nName: {current_user.get_full_name()}\nEvent: {event.name}"
             qr = qrcode.QRCode(version=1, box_size=10, border=5)
-            qr.add_data(qr_text)
-            qr.make(fit=True)
+            qr.add_data(qr_text); qr.make(fit=True)
             img = qr.make_image(fill_color="black", back_color="white")
-            buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
-            qr_base64 = base64.b64encode(buffered.getvalue()).decode()
+            buffered = io.BytesIO(); img.save(buffered, format="PNG")
+            
+            # Status Logic
+            final_status = 'pending'
+            if not event.is_paid or payable_amount == 0: 
+                final_status = 'completed'
+            if payment_mode_selected == 'hold':
+                final_status = 'on-hold'
 
             r = EventResponse(
-                event_id=event_id,
-                student_id=stu_id,
-                team_id=t_id,
-                response_json=json.dumps(responses),
-                ticket_id=ticket_id,
-                qr_code_data=qr_base64
+                event_id=event_id, student_id=current_user.id, team_id=team_id,
+                response_json=json.dumps(responses), ticket_id=ticket_id,
+                qr_code_data=base64.b64encode(buffered.getvalue()).decode(),
+                payment_status=final_status
             )
-            db.session.add(r)
-            db.session.flush() # To get ID for leader_response
+            db.session.add(r); db.session.flush()
             return r
 
-        leader_response = create_ticket_record(current_user.id, team_id)
-        
-        for ex_mem in extra_members_found:
-            create_ticket_record(ex_mem.id, team_id)
-
+        leader_response = create_ticket_record()
         db.session.commit()
         
+        if event.is_paid and payment_mode_selected == 'pay' and payable_amount > 0:
+            key_id = SystemConfig.query.filter_by(key='razorpay_key_id').first()
+            key_secret = SystemConfig.query.filter_by(key='razorpay_key_secret').first()
+            if not key_id or not key_secret:
+                return jsonify({'status': 'error', 'message': 'Payment gateway error'})
+                
+            client = razorpay.Client(auth=(key_id.value, key_secret.value))
+            order = client.order.create({
+                'amount': int(payable_amount * 100), 'currency': 'INR',
+                'receipt': f'reg_{leader_response.id}', 'payment_capture': 1
+            })
+            leader_response.razorpay_order_id = order['id']
+            db.session.commit()
+            
+            return jsonify({
+                'status': 'pay', 'order_id': order['id'], 'key': key_id.value,
+                'amount': order['amount'], 'event_name': event.name,
+                'user_name': current_user.get_full_name(), 'user_email': current_user.email,
+                'response_id': leader_response.id
+            })
+
         flash('Registration successful!', 'success')
-        return redirect(url_for('club_portal.registration_ticket', response_id=leader_response.id))
+        return jsonify({'status': 'success', 'redirect': url_for('club_portal.registration_ticket', response_id=leader_response.id)})
 
     schema = json.loads(form_obj.schema_json) if form_obj and form_obj.schema_json else []
     return render_template('club/apply_event.html', event=event, schema=schema, now=datetime.utcnow())
@@ -566,7 +496,15 @@ def registration_ticket(response_id):
     ticket_status = 'VALID'
     status_msg = ''
     
-    if team:
+    # NEW: Check Payment Status FIRST
+    if response.event.is_paid and response.payment_status != 'completed':
+        ticket_status = 'UNPAID'
+        if response.payment_status == 'on-hold':
+            status_msg = 'Payment On Hold: Please settle the amount at the event desk to unlock your ticket.'
+        else:
+            status_msg = 'Payment Pending: Your ticket will be active once payment is verified.'
+    
+    elif team:
         from models import TeamMember
         members_count = TeamMember.query.filter_by(team_id=team.id).count()
         event = response.event
@@ -587,6 +525,114 @@ def registration_ticket(response_id):
                 status_msg = f'Pending Members: Your team needs {event.team_size_min - members_count} more member(s) to validate this ticket.'
 
     return render_template('club/ticket.html', response=response, team=team, ticket_status=ticket_status, status_msg=status_msg)
+
+@bp.route('/pay-existing/<int:response_id>', methods=['POST'])
+@login_required
+def initiate_payment(response_id):
+    response = EventResponse.query.get_or_404(response_id)
+    if response.student_id != current_user.id:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 403
+    
+    if response.payment_status == 'completed':
+        return jsonify({'status': 'error', 'message': 'Payment already completed'})
+    
+    event = response.event
+    if not event.is_paid:
+        return jsonify({'status': 'error', 'message': 'This is a free event'})
+
+    # Calculate Payable Amount (Similar to apply_event logic)
+    payable_amount = 0.0
+    if event.payment_model == 'leader':
+        team = Team.query.get(response.team_id) if response.team_id else None
+        if team and team.leader_id == current_user.id:
+            payable_amount = event.amount * team.declared_size
+        else:
+            if team and team.is_paid:
+                return jsonify({'status': 'error', 'message': 'Team already paid by leader'})
+            return jsonify({'status': 'error', 'message': 'This event requires the team leader to pay.'})
+    else:
+        payable_amount = event.amount
+
+    if payable_amount <= 0:
+         return jsonify({'status': 'error', 'message': 'Invalid payment amount'})
+
+    # Razorpay Logic
+    key_id = SystemConfig.query.filter_by(key='razorpay_key_id').first()
+    key_secret = SystemConfig.query.filter_by(key='razorpay_key_secret').first()
+    if not key_id or not key_secret:
+        return jsonify({'status': 'error', 'message': 'Payment gateway error'})
+        
+    client = razorpay.Client(auth=(key_id.value, key_secret.value))
+    try:
+        order = client.order.create({
+            'amount': int(payable_amount * 100), 'currency': 'INR',
+            'receipt': f'reg_{response.id}', 'payment_capture': 1
+        })
+        response.razorpay_order_id = order['id']
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'pay', 'order_id': order['id'], 'key': key_id.value,
+            'amount': order['amount'], 'event_name': event.name,
+            'user_name': current_user.get_full_name(), 'user_email': current_user.email,
+            'response_id': response.id
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+@bp.route('/verify-payment', methods=['POST'])
+def verify_payment():
+    import razorpay
+    data = request.get_json()
+    resp_id = data.get('response_id')
+    razorpay_order_id = data.get('razorpay_order_id')
+    razorpay_payment_id = data.get('razorpay_payment_id')
+    razorpay_signature = data.get('razorpay_signature')
+
+    key_id = SystemConfig.query.filter_by(key='razorpay_key_id').first()
+    key_secret = SystemConfig.query.filter_by(key='razorpay_key_secret').first()
+    
+    client = razorpay.Client(auth=(key_id.value, key_secret.value))
+    params_dict = {
+        'razorpay_order_id': razorpay_order_id,
+        'razorpay_payment_id': razorpay_payment_id,
+        'razorpay_signature': razorpay_signature
+    }
+
+    try:
+        client.utility.verify_payment_signature(params_dict)
+        response = EventResponse.query.get(resp_id)
+        if response:
+            response.payment_status = 'completed'
+            response.razorpay_payment_id = razorpay_payment_id
+            
+            # Financial Tracking
+            event = response.event
+            payment_info = client.payment.fetch(razorpay_payment_id)
+            amount_paid = float(payment_info['amount']) / 100.0
+            
+            event.total_collected += amount_paid
+            
+            # If leader paid in 'leader' model, mark team as paid
+            if response.team_id and event.payment_model == 'leader':
+                team = Team.query.get(response.team_id)
+                if team and team.leader_id == response.student_id:
+                    team.is_paid = True
+            
+            # Log Transaction (Category: registration_fee)
+            new_tx = FinanceTransaction(
+                club_id=event.club_id,
+                event_id=event.id,
+                amount=amount_paid,
+                type='credit',
+                category='registration_fee',
+                description=f"Registration Fee: {response.student.get_full_name()} ({response.ticket_id})"
+            )
+            db.session.add(new_tx)
+            db.session.commit()
+            return jsonify({'success': True, 'redirect': url_for('club_portal.registration_ticket', response_id=response.id)})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
 
 @bp.route('/events/<int:event_id>/scanner')
 def scanner(event_id):

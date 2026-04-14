@@ -56,15 +56,15 @@
                             </div>
                             <div class="col-5 text-center">
                                 <div class="bg-white p-2 rounded shadow-sm d-inline-block position-relative">
-                                    <img src="data:image/png;base64,{{ response.qr_code_data }}" class="img-fluid {% if ticket_status in ['PENDING', 'REJECTED'] %}qr-blurred{% endif %}"
-                                        style="width: 150px; height: 150px;">
-                                    {% if ticket_status in ['PENDING', 'REJECTED'] %}
-                                    <div class="position-absolute top-50 start-50 translate-middle w-100 px-1">
-                                        <span class="badge bg-danger rounded-pill px-2 py-1 shadow-sm border border-white" style="font-size:0.65rem;">
-                                            <i class="fas fa-lock me-1"></i>{{ ticket_status }}
-                                        </span>
-                                    </div>
-                                    {% endif %}
+                                    <img src="data:image/png;base64,{{ response.qr_code_data }}" class="img-fluid {% if ticket_status in ['PENDING', 'REJECTED', 'UNPAID'] %}qr-blurred{% endif %}"
+                                         style="width: 150px; height: 150px;">
+                                     {% if ticket_status in ['PENDING', 'REJECTED', 'UNPAID'] %}
+                                     <div class="position-absolute top-50 start-50 translate-middle w-100 px-1">
+                                         <span class="badge bg-danger rounded-pill px-2 py-1 shadow-sm border border-white" style="font-size:0.65rem;">
+                                             <i class="fas fa-lock me-1"></i>{{ ticket_status }}
+                                         </span>
+                                     </div>
+                                     {% endif %}
                                 </div>
                                 <div class="mt-2 fw-bold {% if ticket_status == 'REJECTED' %}text-danger text-decoration-line-through{% else %}text-primary{% endif %} small">{{ response.ticket_id }}</div>
                             </div>
@@ -81,6 +81,13 @@
                         {% elif ticket_status == 'ACCEPTED_SOLO' %}
                         <div class="alert alert-success py-2 px-3 small border-0 mb-0 text-start">
                             <i class="fas fa-user-check me-1"></i> {{ status_msg }}
+                        </div>
+                        {% elif ticket_status == 'UNPAID' %}
+                        <div class="alert alert-danger py-2 px-3 small border-0 mb-0 d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="fas fa-credit-card me-1"></i> <strong>Payment Required:</strong> {{ status_msg }}
+                            </div>
+                            <button onclick="payNow(this, {{ response.id }})" class="btn btn-danger btn-sm rounded-pill px-3 ms-2 fw-bold" style="font-size: 0.7rem;">Pay Now</button>
                         </div>
                         {% else %}
                         <div class="alert alert-info py-2 px-3 small border-0 mb-0 text-start">
@@ -146,6 +153,74 @@
         pointer-events: none;
     }
 </style>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script>
+    function payNow(btn, responseId) {
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>';
+        btn.disabled = true;
+
+        fetch(`/club/pay-existing/${responseId}`, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'pay') {
+                const options = {
+                    "key": data.key,
+                    "amount": data.amount,
+                    "currency": "INR",
+                    "name": "GenZCampus",
+                    "description": data.event_name,
+                    "order_id": data.order_id,
+                    "handler": function (response) {
+                        fetch("{{ url_for('club_portal.verify_payment') }}", {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                            body: JSON.stringify({
+                                response_id: data.response_id,
+                                razorpay_order_id: response.razorpay_order_id,
+                                razorpay_payment_id: response.razorpay_payment_id,
+                                razorpay_signature: response.razorpay_signature
+                            })
+                        })
+                        .then(r => r.json())
+                        .then(v => {
+                            if (v.success) window.location.href = v.redirect;
+                            else { alert(v.message); btn.innerHTML = originalText; btn.disabled = false; }
+                        });
+                    },
+                    "prefill": {
+                        "name": data.user_name,
+                        "email": data.user_email
+                    },
+                    "theme": { "color": "#0d6efd" },
+                    "modal": {
+                        "ondismiss": () => {
+                            btn.innerHTML = originalText;
+                            btn.disabled = false;
+                        }
+                    }
+                };
+                new Razorpay(options).open();
+            } else {
+                alert(data.message || "Error starting payment");
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert("Connection error");
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        });
+    }
+</script>
 {% endblock %}
 
 
